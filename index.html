@@ -342,7 +342,13 @@
       <div class="mode-selector" id="mode-selector">
         <button class="mode-btn active" data-mode="random" onclick="selectMode(this)">🎲 ランダム</button>
         <button class="mode-btn" data-mode="weak" onclick="selectMode(this)">📌 苦手優先</button>
-        <button class="mode-btn" data-mode="year" onclick="selectMode(this)">📅 本試験形式（20問）</button>
+        <button class="mode-btn" data-mode="year" onclick="selectMode(this)">📅 本試験形式</button>
+      </div>
+      <div class="section-title">問題数</div>
+      <div class="mode-selector" id="count-selector">
+        <button class="mode-btn active" data-count="3" onclick="selectCount(this)">3問</button>
+        <button class="mode-btn" data-count="5" onclick="selectCount(this)">5問</button>
+        <button class="mode-btn" data-count="10" onclick="selectCount(this)">10問</button>
       </div>
       <div class="section-title">難易度</div>
       <div class="mode-selector" id="diff-selector">
@@ -390,6 +396,7 @@ const SUBJECTS = [
 
 let selectedSubjects = new Set(SUBJECTS.map(s => s.id));
 let currentMode = 'random';
+let currentQuestionCount = 5;
 let currentDiff = 'all';
 let quizQuestions = [];
 let currentQIndex = 0;
@@ -451,11 +458,17 @@ function selectDiff(btn) {
   currentDiff = btn.dataset.diff;
 }
 
+function selectCount(btn) {
+  document.querySelectorAll('#count-selector .mode-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  currentQuestionCount = parseInt(btn.dataset.count);
+}
+
 // ─── QUIZ LOGIC ───
 async function startQuiz() {
   const subjects = [...selectedSubjects];
   if (!subjects.length) return alert('科目を選択してください');
-  const count = currentMode === 'year' ? 10 : 5;
+  const count = currentQuestionCount;
   showPage('quiz');
   quizQuestions = [];
   currentQIndex = 0;
@@ -501,7 +514,7 @@ async function generateQuestion(subjects, total) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
-        max_tokens: 4000,
+        max_tokens: 3000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
