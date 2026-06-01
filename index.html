@@ -455,7 +455,7 @@ function selectDiff(btn) {
 async function startQuiz() {
   const subjects = [...selectedSubjects];
   if (!subjects.length) return alert('科目を選択してください');
-  const count = currentMode === 'year' ? 20 : 5;
+  const count = currentMode === 'year' ? 10 : 5;
   showPage('quiz');
   quizQuestions = [];
   currentQIndex = 0;
