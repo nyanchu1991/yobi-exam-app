@@ -650,8 +650,18 @@ function selectAnswer(idx) {
   saveStats();
 
   const expArea = document.getElementById('explanation-area');
-  const answerLabel = q.is_past ? q.answer_display : String.fromCharCode(65+correct);
-  expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${q.explanation}</div>`;
+  if (q.is_past) {
+    const correctLabel = q.answer_display;
+    const correctText = q.options[correct];
+    expArea.innerHTML = `<div class="explanation-box">
+      <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
+      ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${correctLabel}</strong>：${correctText}</span>` : ''}
+      <div style="margin-top:10px;font-size:12px;color:var(--text3);">${q.year_label}（${q.year}年）本試験 · 問${q.question_no} · ${q.points}点</div>
+    </div>`;
+  } else {
+    const answerLabel = String.fromCharCode(65+correct);
+    expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${q.explanation}</div>`;
+  }
   document.getElementById('quiz-actions').style.display = 'flex';
 }
 
@@ -693,7 +703,7 @@ function showResult() {
           <div class="review-meta">
             <span class="tag ${a.correct ? 'tag-correct' : 'tag-wrong'}">${a.correct ? '正解' : '不正解'}</span>
             <span>${a.question.subject}</span>
-            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:6px;">正解: ${String.fromCharCode(65+a.question.answer)}. ${a.question.options[a.question.answer]}</span>` : ''}
+            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:6px;">正解: ${a.question.is_past ? a.question.answer_display : String.fromCharCode(65+a.question.answer)}. ${a.question.options[a.question.answer]}</span>` : ''}
           </div>
         </div>`).join('')}
     </div>
@@ -812,7 +822,7 @@ function startPastQuiz() {
     question_no: q.question_no,
     points: q.points,
     type: q.type,
-    explanation: `【正解: ${q.answer_display}】${q.options[q.answer]}\n\n${q.label}に関する問題です。正解は選択肢${q.answer_display}（${q.options[q.answer]}）です。\n\n本問は${q.year_label}（${q.year}年）の本試験問題です。`,
+    explanation: '',
     is_past: true
   }));
   
