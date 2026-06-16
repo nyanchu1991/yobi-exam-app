@@ -451,7 +451,10 @@
 
   <!-- ── STATS PAGE ── -->
   <div id="page-stats" class="page">
-    <div class="section-title">学習成績</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="section-title" style="margin:0;">学習成績</div>
+      <button onclick="resetStats()" style="background:transparent;border:1px solid var(--text3);color:var(--text3);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;" onmouseover="this.style.borderColor='#e05555';this.style.color='#e05555'" onmouseout="this.style.borderColor='var(--text3)';this.style.color='var(--text3)'">🗑️ リセット</button>
+    </div>
     <div class="stats-grid" id="stats-overview"></div>
     <div class="section-title" style="margin-top:8px;">科目別 正答率</div>
     <div class="subject-stats" id="subject-stats-list"></div>
@@ -478,6 +481,14 @@ let quizQuestions = [];
 let currentQIndex = 0;
 let answers = [];
 let stats = loadStats();
+
+function resetStats() {
+  if (!confirm('成績をリセットしますか？この操作は元に戻せません。')) return;
+  localStorage.removeItem('yobiStats');
+  stats = {};
+  renderStats();
+  alert('成績をリセットしました。');
+}
 
 function loadStats() {
   try { return JSON.parse(localStorage.getItem('yobiStats') || '{}'); } catch { return {}; }
