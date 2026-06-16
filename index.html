@@ -390,7 +390,7 @@
   <div id="page-past" class="page">
     <div class="home-hero" style="padding-bottom:16px;">
       <h1 style="font-size:20px;">過去問モード</h1>
-      <p>H28〜R7の本試験問題 全7科目 1333問を収録。</p>
+      <p>H28〜R7の本試験問題 全7科目 <span id="total-q-count">-</span>問を収録。</p>
     </div>
 
     <!-- 年度選択 -->
@@ -762,6 +762,11 @@ function showPage(id) {
 
 
 // PAST_Q_DB は questions.js から読み込み
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof PAST_Q_DB !== 'undefined') {
+    document.getElementById('total-q-count').textContent = PAST_Q_DB.length.toLocaleString();
+  }
+});
 
 // ─── PAST EXAM STATE ───
 let pastYear = 'all';
