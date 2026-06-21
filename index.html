@@ -215,6 +215,25 @@
   }
   .btn-skip:hover { border-color: var(--text2); color: var(--text); }
 
+  /* ─── AI解説ボタン ─── */
+  .btn-ai-explain {
+    background: rgba(91,141,238,0.15);
+    color: var(--blue);
+    border: 1px solid rgba(91,141,238,0.4);
+    border-radius: 8px; padding: 10px 20px;
+    font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: all .2s; margin-top: 12px; display: inline-block;
+  }
+  .btn-ai-explain:hover:not(:disabled) { background: rgba(91,141,238,0.25); }
+  .btn-ai-explain:disabled { opacity: 0.5; cursor: not-allowed; }
+  .ai-explanation-content {
+    background: rgba(91,141,238,0.06);
+    border-left: 3px solid var(--blue);
+    border-radius: 6px; padding: 14px 16px;
+    font-size: 13px; line-height: 1.8; color: var(--text);
+    margin-top: 12px; white-space: pre-wrap;
+  }
+
   /* ─── RESULT ─── */
   .result-card {
     background: var(--surface);
@@ -302,7 +321,6 @@
   .diff-med  { background: rgba(224,157,60,0.15); color: var(--amber); }
   .diff-hard { background: rgba(224,85,85,0.12); color: var(--red); }
 
-
   .past-year-badge {
     display: inline-block; padding: 2px 8px;
     border-radius: 4px; font-size: 11px; font-weight: 700;
@@ -385,7 +403,6 @@
     <div id="result-content"></div>
   </div>
 
-
   <!-- ── PAST EXAM PAGE ── -->
   <div id="page-past" class="page">
     <div class="home-hero" style="padding-bottom:16px;">
@@ -393,7 +410,6 @@
       <p>H28〜R7の本試験問題 全7科目 <span id="total-q-count">-</span>問を収録。</p>
     </div>
 
-    <!-- 年度選択 -->
     <div class="section-title">年度を選択</div>
     <div class="mode-selector" id="past-year-selector" style="flex-wrap:wrap;">
       <button class="mode-btn active" data-year="all" onclick="selectPastYear(this)">全年度</button>
@@ -409,7 +425,6 @@
       <button class="mode-btn" data-year="H28" onclick="selectPastYear(this)">H28</button>
     </div>
 
-    <!-- 科目選択 -->
     <div class="section-title">科目</div>
     <div class="mode-selector" id="past-subject-selector" style="flex-wrap:wrap;gap:8px;">
       <button class="mode-btn active" data-subj="all" onclick="selectPastSubj(this)">全科目</button>
@@ -425,14 +440,12 @@
       <button class="mode-btn" data-subj="民事訴訟法" onclick="selectPastSubj(this)">民事訴訟法</button>
     </div>
 
-    <!-- 出題順 -->
     <div class="section-title">出題順</div>
     <div class="mode-selector" id="past-order-selector">
       <button class="mode-btn active" data-order="seq" onclick="selectPastOrder(this)">📋 本試験順</button>
       <button class="mode-btn" data-order="random" onclick="selectPastOrder(this)">🎲 ランダム</button>
     </div>
 
-    <!-- 問題数 -->
     <div class="section-title">問題数</div>
     <div class="mode-selector" id="past-count-selector">
       <button class="mode-btn active" data-count="10" onclick="selectPastCount(this)">10問</button>
@@ -441,7 +454,7 @@
     </div>
 
     <div id="past-info" style="font-size:13px;color:var(--text2);margin:12px 0 20px;text-align:center;">
-      対象: <span id="past-count-display">542</span>問
+      対象: <span id="past-count-display">-</span>問
     </div>
 
     <div class="start-area">
@@ -451,7 +464,7 @@
 
   <!-- ── STATS PAGE ── -->
   <div id="page-stats" class="page">
-    <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
       <div class="section-title" style="margin:0;">学習成績</div>
       <button onclick="resetStats()" style="background:transparent;border:1px solid var(--text3);color:var(--text3);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;" onmouseover="this.style.borderColor='#e05555';this.style.color='#e05555'" onmouseout="this.style.borderColor='var(--text3)';this.style.color='var(--text3)'">🗑️ リセット</button>
     </div>
@@ -482,6 +495,7 @@ let currentQIndex = 0;
 let answers = [];
 let stats = loadStats();
 
+// ─── STATS ───
 function resetStats() {
   if (!confirm('成績をリセットしますか？この操作は元に戻せません。')) return;
   localStorage.removeItem('yobiStats');
@@ -489,7 +503,6 @@ function resetStats() {
   renderStats();
   alert('成績をリセットしました。');
 }
-
 function loadStats() {
   try { return JSON.parse(localStorage.getItem('yobiStats') || '{}'); } catch { return {}; }
 }
@@ -544,23 +557,21 @@ function selectDiff(btn) {
   btn.classList.add('active');
   currentDiff = btn.dataset.diff;
 }
-
 function selectCount(btn) {
   document.querySelectorAll('#count-selector .mode-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   currentQuestionCount = parseInt(btn.dataset.count);
 }
 
-// ─── QUIZ LOGIC ───
+// ─── QUIZ LOGIC (AI生成) ───
 async function startQuiz() {
   const subjects = [...selectedSubjects];
   if (!subjects.length) return alert('科目を選択してください');
-  const count = currentQuestionCount;
   showPage('quiz');
   quizQuestions = [];
   currentQIndex = 0;
   answers = [];
-  await generateQuestion(subjects, count);
+  await generateQuestion(subjects, currentQuestionCount);
 }
 
 async function generateQuestion(subjects, total) {
@@ -600,7 +611,7 @@ async function generateQuestion(subjects, total) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5',
+        model: 'claude-sonnet-4-6',
         max_tokens: 3000,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -620,7 +631,6 @@ function showQuestion() {
   if (quizQuestions[currentQIndex]?.is_past) { showPastQuestion(); return; }
   const q = quizQuestions[currentQIndex];
   const qc = document.getElementById('quiz-content');
-  const sub = SUBJECTS.find(s => s.name === q.subject) || SUBJECTS[0];
   const diffLabel = q.difficulty === 'easy' ? '基礎' : q.difficulty === 'hard' ? '難問' : '標準';
   const diffClass = q.difficulty === 'easy' ? 'diff-easy' : q.difficulty === 'hard' ? 'diff-hard' : 'diff-med';
 
@@ -643,13 +653,13 @@ function showQuestion() {
     </div>
     <div id="explanation-area"></div>
     <div class="quiz-actions" id="quiz-actions" style="display:none">
-      <button class="btn-next" onclick="nextQuestion()" id="btn-next-q">
+      <button class="btn-next" onclick="nextQuestion()">
         ${currentQIndex + 1 < quizQuestions.length ? '次の問題 →' : '結果を見る'}
       </button>
-      <button class="btn-skip" onclick="showExplanationDetail()">解説を見る</button>
     </div>`;
 }
 
+// ─── 回答処理 ───
 function selectAnswer(idx) {
   const q = quizQuestions[currentQIndex];
   const correct = q.answer;
@@ -661,9 +671,9 @@ function selectAnswer(idx) {
     if (i === correct && !isCorrect) btn.classList.add('revealed-correct');
   });
 
-  answers.push({ question: q, chosen: idx, correct: isCorrect });
+  const answerEntry = { question: q, chosen: idx, correct: isCorrect, aiExplanation: '' };
+  answers.push(answerEntry);
 
-  // update stats
   const ss = getSubjectStats(SUBJECTS.find(s => s.name === q.subject)?.id || 'kenpo');
   ss.total++;
   if (isCorrect) ss.correct++; else ss.wrong++;
@@ -673,19 +683,69 @@ function selectAnswer(idx) {
   if (q.is_past) {
     const correctLabel = q.answer_display;
     const correctText = q.options[correct];
-    expArea.innerHTML = `<div class="explanation-box">
-      <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
-      ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${correctLabel}</strong>：${correctText}</span>` : ''}
-      <div style="margin-top:10px;font-size:12px;color:var(--text3);">${q.year_label}（${q.year}年）本試験 · 問${q.question_no} · ${q.points}点</div>
-    </div>`;
+    expArea.innerHTML = `
+      <div class="explanation-box">
+        <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
+        ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${correctLabel}</strong>：${correctText}</span>` : ''}
+        <div style="margin-top:8px;font-size:12px;color:var(--text3);">${q.year_label}（${q.year}年）本試験 · 問${q.question_no} · ${q.points}点</div>
+        ${!isCorrect ? `<button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>` : ''}
+        <div id="ai-exp-${currentQIndex}"></div>
+      </div>`;
   } else {
-    const answerLabel = String.fromCharCode(65+correct);
     expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${q.explanation}</div>`;
   }
   document.getElementById('quiz-actions').style.display = 'flex';
 }
 
-function showExplanationDetail() {}
+// ─── AI解説取得 ───
+async function getAIExplanation(qIdx) {
+  const q = quizQuestions[qIdx];
+  const btn = document.getElementById(`btn-ai-${qIdx}`);
+  const container = document.getElementById(`ai-exp-${qIdx}`);
+  if (!btn || !container) return;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ 解説を生成中...';
+
+  const prompt = `司法試験予備試験の短答式問題について、不正解だった受験生向けに解説してください。
+
+【科目】${q.subject}
+【年度】${q.year_label}（${q.year}年）本試験 第${q.question_no}問
+【問題文】
+${q.question.substring(0, 600)}
+【選択肢】
+${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
+【正解】${q.answer_display}（${q.options[q.answer]}）
+
+以下の構成で解説してください：
+1. 正解の理由（条文・判例の根拠を明示）
+2. 間違えやすいポイント
+3. 関連する重要判例・条文（あれば）
+
+簡潔に200〜300字程度でまとめてください。`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '解説を取得できませんでした。';
+    container.innerHTML = `<div class="ai-explanation-content">${text}</div>`;
+    btn.style.display = 'none';
+    // answersに保存（CSV用）
+    if (answers[qIdx]) answers[qIdx].aiExplanation = text;
+  } catch(e) {
+    container.innerHTML = '<div style="color:var(--red);font-size:13px;margin-top:8px;">解説の取得に失敗しました。</div>';
+    btn.disabled = false;
+    btn.textContent = '🤖 AI解説を見る';
+  }
+}
 
 function nextQuestion() {
   currentQIndex++;
@@ -723,14 +783,50 @@ function showResult() {
           <div class="review-meta">
             <span class="tag ${a.correct ? 'tag-correct' : 'tag-wrong'}">${a.correct ? '正解' : '不正解'}</span>
             <span>${a.question.subject}</span>
-            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:6px;">正解: ${a.question.is_past ? a.question.answer_display : String.fromCharCode(65+a.question.answer)}. ${a.question.options[a.question.answer]}</span>` : ''}
+            ${a.question.is_past ? `<span style="margin-left:4px;font-size:11px;color:var(--text3);">${a.question.year_label} 問${a.question.question_no}</span>` : ''}
+            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:4px;">正解: ${a.question.is_past ? a.question.answer_display : String.fromCharCode(65+a.question.answer)}. ${a.question.options[a.question.answer]}</span>` : ''}
+            ${a.aiExplanation ? `<div style="margin-top:6px;padding:8px 10px;background:rgba(91,141,238,0.06);border-left:2px solid var(--blue);border-radius:4px;font-size:12px;color:var(--text);white-space:pre-wrap;">${a.aiExplanation}</div>` : ''}
           </div>
         </div>`).join('')}
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
-      <button class="btn-start" onclick="startQuiz()">もう一度練習する</button>
+      <button class="btn-start" onclick="showPage('past');updatePastInfo()">もう一度解く</button>
       <button class="btn-skip" onclick="showPage('home');renderHome()">ホームへ戻る</button>
+      <button class="btn-skip" onclick="downloadCSV()" style="border-color:var(--green);color:var(--green);">📥 CSVダウンロード</button>
     </div>`;
+}
+
+// ─── CSVエクスポート ───
+function downloadCSV() {
+  if (!answers.length) return alert('演習データがありません。');
+  const rows = [['問番号','科目','年度','本試験問番号','問題文(先頭100字)','正解','自分の解答','正誤','AI解説']];
+  answers.forEach((a, i) => {
+    const q = a.question;
+    const myAns = (q.options[a.chosen] || String(a.chosen));
+    const correctAns = q.is_past
+      ? `${q.answer_display}: ${q.options[q.answer]}`
+      : `${String.fromCharCode(65+q.answer)}: ${q.options[q.answer]}`;
+    const qText = q.question.substring(0, 100).replace(/[\r\n]+/g, ' ');
+    rows.push([
+      i + 1,
+      q.subject,
+      q.year_label || 'AI生成',
+      q.question_no || '',
+      `"${qText.replace(/"/g, '""')}"`,
+      `"${correctAns.replace(/"/g, '""')}"`,
+      `"${myAns.replace(/"/g, '""')}"`,
+      a.correct ? '正解' : '不正解',
+      `"${(a.aiExplanation || '').replace(/"/g, '""').replace(/[\r\n]+/g, ' ')}"`
+    ]);
+  });
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const now = new Date();
+  const dt = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+  a.href = url; a.download = `yobi_log_${dt}.csv`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ─── STATS PAGE ───
@@ -771,8 +867,7 @@ function showPage(id) {
   if (id === 'stats') { renderStats(); document.querySelector('.nav-tab:nth-child(3)').classList.add('active'); }
 }
 
-
-// PAST_Q_DB は questions.js から読み込み
+// ─── 問題総数（動的） ───
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof PAST_Q_DB !== 'undefined') {
     document.getElementById('total-q-count').textContent = PAST_Q_DB.length.toLocaleString();
@@ -828,21 +923,15 @@ function updatePastInfo() {
 function startPastQuiz() {
   let pool = getPastFiltered();
   if (!pool.length) return alert('対象の問題がありません');
-  
-  if (pastOrder === 'random') {
-    pool = [...pool].sort(() => Math.random() - 0.5);
-  }
-  
+  if (pastOrder === 'random') pool = [...pool].sort(() => Math.random() - 0.5);
   const count = pastCount === 0 ? pool.length : Math.min(pastCount, pool.length);
   const selected = pool.slice(0, count);
-  
-  // AI生成問題形式に変換
+
   quizQuestions = selected.map(q => ({
     id: q.id,
     subject: q.subject,
     difficulty: 'medium',
     question: q.question,
-    question_detail: q.question,
     options: q.options,
     answer: q.answer,
     answer_display: q.answer_display,
@@ -854,7 +943,7 @@ function startPastQuiz() {
     explanation: '',
     is_past: true
   }));
-  
+
   currentQIndex = 0;
   answers = [];
   showPage('quiz');
@@ -864,8 +953,7 @@ function startPastQuiz() {
 function showPastQuestion() {
   const q = quizQuestions[currentQIndex];
   const qc = document.getElementById('quiz-content');
-  const sub = SUBJECTS.find(s => s.name === q.subject) || SUBJECTS[0];
-  
+
   qc.innerHTML = `
     <div class="quiz-header">
       <div>
@@ -889,7 +977,7 @@ function showPastQuestion() {
     </div>
     <div id="explanation-area"></div>
     <div class="quiz-actions" id="quiz-actions" style="display:none">
-      <button class="btn-next" onclick="nextQuestion()" id="btn-next-q">
+      <button class="btn-next" onclick="nextQuestion()">
         ${currentQIndex + 1 < quizQuestions.length ? '次の問題 →' : '結果を見る'}
       </button>
     </div>`;
