@@ -1,4 +1,27 @@
 export default async function handler(req, res) {
+  if (req.method === 'GET') {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error('API Error: ANTHROPIC_API_KEY is not set.');
+      return res.status(500).json({ error: 'Server configuration error: API key is missing.' });
+    }
+    try {
+      console.log('Fetching available models from Anthropic...');
+      const response = await fetch('https://api.anthropic.com/v1/models', {
+        method: 'GET',
+        headers: {
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        }
+      });
+      const data = await response.json();
+      console.log('Anthropic GET /v1/models response:', JSON.stringify(data));
+      return res.status(response.status).json(data);
+    } catch (err) {
+      console.error('API Proxy Models Exception:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
