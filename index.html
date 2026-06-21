@@ -720,7 +720,7 @@ async function generateQuestion(subjects, total) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
+        model: 'claude-3-haiku-20240307',
         max_tokens: 3000,
         messages: [{ role: 'user', content: prompt }]
       })
@@ -853,7 +853,7 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20240620',
+        model: 'claude-3-haiku-20240307',
         max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }]
       })
