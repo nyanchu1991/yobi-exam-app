@@ -9,6 +9,17 @@ export default async function handler(req, res) {
   }
 
   try {
+    let requestBody = req.body;
+    if (typeof requestBody === 'string') {
+      try {
+        requestBody = JSON.parse(requestBody);
+      } catch (e) {
+        console.warn('Failed to parse request body string as JSON:', e);
+      }
+    }
+
+    console.log('Sending request to Anthropic with payload:', JSON.stringify(requestBody));
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -16,7 +27,7 @@ export default async function handler(req, res) {
         'x-api-key': process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify(req.body),
+      body: JSON.stringify(requestBody),
     });
 
     const data = await response.json();
