@@ -725,7 +725,7 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 簡潔に200〜300字程度でまとめてください。`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
