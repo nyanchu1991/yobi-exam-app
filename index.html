@@ -565,6 +565,24 @@ function saveQuizLog(entries) {
     }
   }
 }
+function appendQuizLogEntry(answerEntry) {
+  const log = loadQuizLog();
+  const q = answerEntry.question;
+  log.push({
+    date: new Date().toISOString(),
+    subject: q.subject,
+    year_label: q.year_label || 'AI生成',
+    question_no: q.question_no || '',
+    question_head: q.question.substring(0, 80).replace(/[\r\n]+/g, ' '),
+    correct_ans: q.is_past
+      ? `${q.answer_display}: ${q.options[q.answer]}`
+      : `${String.fromCharCode(65 + q.answer)}: ${q.options[q.answer]}`,
+    my_ans: q.options[answerEntry.chosen] || String(answerEntry.chosen),
+    result: answerEntry.correct ? '正解' : '不正解',
+    ai_explanation: (answerEntry.aiExplanation || '').replace(/[\r\n]+/g, ' '),
+  });
+  saveQuizLog(log);
+}
 function appendQuizLog(sessionAnswers) {
   const log = loadQuizLog();
   const now = new Date().toISOString();
@@ -796,6 +814,7 @@ function selectAnswer(idx) {
 
   const answerEntry = { question: q, chosen: idx, correct: isCorrect, aiExplanation: '' };
   answers.push(answerEntry);
+  appendQuizLogEntry(answerEntry); // 回答即時保存
 
   const ss = getSubjectStats(SUBJECTS.find(s => s.name === q.subject)?.id || 'kenpo');
   ss.total++;
@@ -868,7 +887,19 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
     container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(text)}</div>`;
     btn.style.display = 'none';
     // answersに保存（CSV用）
-    if (answers[qIdx]) answers[qIdx].aiExplanation = text;
+    if (answers[qIdx]) {
+      answers[qIdx].aiExplanation = text;
+      // ログのAI解説を更新
+      const log = loadQuizLog();
+      const q = answers[qIdx].question;
+      for (let i = log.length - 1; i >= 0; i--) {
+        if (log[i].question_no == q.question_no && log[i].year_label == (q.year_label || 'AI生成')) {
+          log[i].ai_explanation = text.replace(/[\r\n]+/g, ' ');
+          saveQuizLog(log);
+          break;
+        }
+      }
+    }
   } catch(e) {
     console.error('Failed to fetch AI explanation:', e);
     container.innerHTML = `<div style="color:var(--red);font-size:13px;margin-top:8px;">解説の取得に失敗しました。<br><span style="font-size:11px;color:var(--text2);">${escapeHTML(e.message)}</span></div>`;
@@ -888,7 +919,6 @@ function nextQuestion() {
 
 // ─── RESULT ───
 function showResult() {
-  appendQuizLog(answers);
   showPage('result');
   const correct = answers.filter(a => a.correct).length;
   const total = answers.length;
