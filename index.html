@@ -835,7 +835,7 @@ async function getAIExplanation(qIdx) {
 【科目】${q.subject}
 【年度】${q.year_label}（${q.year}年）本試験 第${q.question_no}問
 【問題文】
-${q.question.substring(0, 600)}
+${q.question}
 【選択肢】
 ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 【正解】${q.answer_display}（${q.options[q.answer]}）
