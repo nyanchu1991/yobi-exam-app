@@ -466,7 +466,11 @@
   <div id="page-stats" class="page">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
       <div class="section-title" style="margin:0;">学習成績</div>
-      <button onclick="resetStats()" style="background:transparent;border:1px solid var(--text3);color:var(--text3);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;" onmouseover="this.style.borderColor='#e05555';this.style.color='#e05555'" onmouseout="this.style.borderColor='var(--text3)';this.style.color='var(--text3)'">🗑️ リセット</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button onclick="downloadQuizLogCSV()" style="background:transparent;border:1px solid var(--green);color:var(--green);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;">📥 ログCSV</button>
+        <button onclick="clearQuizLog()" style="background:transparent;border:1px solid var(--text3);color:var(--text3);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;" onmouseover="this.style.borderColor='#e09d3c';this.style.color='#e09d3c'" onmouseout="this.style.borderColor='var(--text3)';this.style.color='var(--text3)'">🗑️ ログ削除</button>
+        <button onclick="resetStats()" style="background:transparent;border:1px solid var(--text3);color:var(--text3);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;" onmouseover="this.style.borderColor='#e05555';this.style.color='#e05555'" onmouseout="this.style.borderColor='var(--text3)';this.style.color='var(--text3)'">📊 成績リセット</button>
+      </div>
     </div>
     <div class="stats-grid" id="stats-overview"></div>
     <div class="section-title" style="margin-top:8px;">科目別 正答率</div>
@@ -508,6 +512,64 @@ function loadStats() {
 }
 function saveStats() {
   try { localStorage.setItem('yobiStats', JSON.stringify(stats)); } catch {}
+}
+
+// ─── 演習ログ（localStorage） ───
+function loadQuizLog() {
+  try { return JSON.parse(localStorage.getItem('yobiQuizLog') || '[]'); } catch { return []; }
+}
+function saveQuizLog(entries) {
+  try { localStorage.setItem('yobiQuizLog', JSON.stringify(entries)); } catch {}
+}
+function appendQuizLog(sessionAnswers) {
+  const log = loadQuizLog();
+  const now = new Date().toISOString();
+  sessionAnswers.forEach(a => {
+    const q = a.question;
+    log.push({
+      date: now,
+      subject: q.subject,
+      year_label: q.year_label || 'AI生成',
+      question_no: q.question_no || '',
+      question_head: q.question.substring(0, 80).replace(/[\r\n]+/g, ' '),
+      correct_ans: q.is_past
+        ? `${q.answer_display}: ${q.options[q.answer]}`
+        : `${String.fromCharCode(65 + q.answer)}: ${q.options[q.answer]}`,
+      my_ans: q.options[a.chosen] || String(a.chosen),
+      result: a.correct ? '正解' : '不正解',
+      ai_explanation: (a.aiExplanation || '').replace(/[\r\n]+/g, ' '),
+    });
+  });
+  saveQuizLog(log);
+}
+function clearQuizLog() {
+  if (!confirm('演習ログをすべて削除しますか？この操作は元に戻せません。')) return;
+  localStorage.removeItem('yobiQuizLog');
+  alert('演習ログを削除しました。');
+  renderStats();
+}
+function downloadQuizLogCSV() {
+  const log = loadQuizLog();
+  if (!log.length) return alert('演習ログがありません。まず過去問を解いてください。');
+  const header = ['実施日時', '科目', '年度', '本試験問番号', '問題文(先頭80字)', '正解', '自分の解答', '正誤', 'AI解説'];
+  const rows = log.map(r => [
+    r.date,
+    r.subject,
+    r.year_label,
+    r.question_no,
+    `"${r.question_head.replace(/"/g, '""')}"`,
+    `"${r.correct_ans.replace(/"/g, '""')}"`,
+    `"${r.my_ans.replace(/"/g, '""')}"`,
+    r.result,
+    `"${r.ai_explanation.replace(/"/g, '""')}"`
+  ]);
+  const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dt = new Date().toISOString().slice(0,16).replace(/[-T:]/g, '').replace('T','_');
+  a.href = url; a.download = `yobi_log_${dt}.csv`; a.click();
+  URL.revokeObjectURL(url);
 }
 function getSubjectStats(subId) {
   if (!stats[subId]) stats[subId] = { total: 0, correct: 0, wrong: 0 };
@@ -758,6 +820,7 @@ function nextQuestion() {
 
 // ─── RESULT ───
 function showResult() {
+  appendQuizLog(answers);
   showPage('result');
   const correct = answers.filter(a => a.correct).length;
   const total = answers.length;
@@ -838,11 +901,13 @@ function renderStats() {
     totalQ += ss.total; totalC += ss.correct;
   });
   const overall = totalQ > 0 ? Math.round(totalC / totalQ * 100) : 0;
+  const logCount = loadQuizLog().length;
   overview.innerHTML = `
     <div class="stat-card"><div class="val">${totalQ}</div><div class="lbl">総解答数</div></div>
     <div class="stat-card"><div class="val">${overall}%</div><div class="lbl">総合正答率</div></div>
     <div class="stat-card"><div class="val">${totalC}</div><div class="lbl">正解数</div></div>
-    <div class="stat-card"><div class="val">${totalQ - totalC}</div><div class="lbl">不正解数</div></div>`;
+    <div class="stat-card"><div class="val">${totalQ - totalC}</div><div class="lbl">不正解数</div></div>
+    <div class="stat-card"><div class="val">${logCount.toLocaleString()}</div><div class="lbl">ログ件数</div></div>`;
 
   const list = document.getElementById('subject-stats-list');
   list.innerHTML = SUBJECTS.map(s => {
