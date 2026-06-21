@@ -830,7 +830,7 @@ async function getAIExplanation(qIdx) {
   btn.disabled = true;
   btn.textContent = '⏳ 解説を生成中...';
 
-  const prompt = `司法試験予備試験の短答式問題について、不正解だった受験生向けに解説してください。
+  const prompt = `司法試験予備試験の短答式問題について、不正解だった受験生向けに詳細に解説してください。
 
 【科目】${q.subject}
 【年度】${q.year_label}（${q.year}年）本試験 第${q.question_no}問
@@ -841,11 +841,12 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 【正解】${q.answer_display}（${q.options[q.answer]}）
 
 以下の構成で解説してください：
-1. 正解の理由（条文・判例の根拠を明示）
-2. 間違えやすいポイント
-3. 関連する重要判例・条文（あれば）
+1. 全体としての正解の理由（根拠となる条文・判例を明示）
+2. 各選択肢（ア、イ、ウなどがある場合はそれぞれ）の正誤の理由の個別解説
+3. 間違えやすいポイントや受験生が混同しやすい法的知識の整理
+4. 関連する重要判例・条文の補足
 
-簡潔に200〜300字程度でまとめてください。`;
+文字数の制限はありません。受験生が十分に理解できるよう詳細に解説してください。`;
 
   try {
     const res = await fetch('/api/generate', {
@@ -853,7 +854,7 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
+        max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
