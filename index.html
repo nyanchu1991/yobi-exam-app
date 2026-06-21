@@ -499,19 +499,47 @@ let currentQIndex = 0;
 let answers = [];
 let stats = loadStats();
 
+// ─── UTILITIES (XSS / CSV Escaping) ───
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  const valStr = typeof str === 'string' ? str : String(str);
+  return valStr.replace(/[&<>'"]/g, 
+    tag => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;'
+    }[tag] || tag)
+  );
+}
+
+function csvCell(val) {
+  if (val === null || val === undefined) return '""';
+  const str = String(val);
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
 // ─── STATS ───
 function resetStats() {
   if (!confirm('成績をリセットしますか？この操作は元に戻せません。')) return;
-  localStorage.removeItem('yobiStats');
-  stats = {};
-  renderStats();
-  alert('成績をリセットしました。');
+  try {
+    localStorage.removeItem('yobiStats');
+    stats = {};
+    renderStats();
+    alert('成績をリセットしました。');
+  } catch (e) {
+    console.error('Failed to reset stats:', e);
+    alert('成績のリセットに失敗しました。');
+  }
 }
 function loadStats() {
   try { return JSON.parse(localStorage.getItem('yobiStats') || '{}'); } catch { return {}; }
 }
 function saveStats() {
-  try { localStorage.setItem('yobiStats', JSON.stringify(stats)); } catch {}
+  try { localStorage.setItem('yobiStats', JSON.stringify(stats)); } catch (e) {
+    console.error('Failed to save stats:', e);
+  }
 }
 
 // ─── 演習ログ（localStorage） ───
@@ -519,7 +547,23 @@ function loadQuizLog() {
   try { return JSON.parse(localStorage.getItem('yobiQuizLog') || '[]'); } catch { return []; }
 }
 function saveQuizLog(entries) {
-  try { localStorage.setItem('yobiQuizLog', JSON.stringify(entries)); } catch {}
+  try {
+    localStorage.setItem('yobiQuizLog', JSON.stringify(entries));
+  } catch (e) {
+    if (e.name === 'QuotaExceededError' || e.code === 22) {
+      // 容量制限に達した場合、古いログを切り捨てて再試行（全体の20%）
+      if (entries.length > 5) {
+        const removeCount = Math.max(1, Math.floor(entries.length * 0.2));
+        console.warn(`LocalStorage quota exceeded. Removing ${removeCount} oldest log entries.`);
+        entries.splice(0, removeCount);
+        saveQuizLog(entries); // 再帰呼び出しで再保存試行
+      } else {
+        console.error('Failed to save quiz log even after cleanup:', e);
+      }
+    } else {
+      console.error('Failed to save quiz log:', e);
+    }
+  }
 }
 function appendQuizLog(sessionAnswers) {
   const log = loadQuizLog();
@@ -553,17 +597,18 @@ function downloadQuizLogCSV() {
   if (!log.length) return alert('演習ログがありません。まず過去問を解いてください。');
   const header = ['実施日時', '科目', '年度', '本試験問番号', '問題文(先頭80字)', '正解', '自分の解答', '正誤', 'AI解説'];
   const rows = log.map(r => [
-    r.date,
-    r.subject,
-    r.year_label,
-    r.question_no,
-    `"${r.question_head.replace(/"/g, '""')}"`,
-    `"${r.correct_ans.replace(/"/g, '""')}"`,
-    `"${r.my_ans.replace(/"/g, '""')}"`,
-    r.result,
-    `"${r.ai_explanation.replace(/"/g, '""')}"`
+    csvCell(r.date),
+    csvCell(r.subject),
+    csvCell(r.year_label),
+    csvCell(r.question_no),
+    csvCell(r.question_head),
+    csvCell(r.correct_ans),
+    csvCell(r.my_ans),
+    csvCell(r.result),
+    csvCell(r.ai_explanation)
   ]);
-  const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+  const headerRow = header.map(csvCell).join(',');
+  const csv = [headerRow, ...rows.map(r => r.join(','))].join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -588,7 +633,7 @@ function renderHome() {
     el.onclick = () => toggleSubject(s.id, el);
     el.innerHTML = `
       <div class="subject-icon">${s.icon}</div>
-      <div class="subject-name">${s.name}</div>
+      <div class="subject-name">${escapeHTML(s.name)}</div>
       <div class="subject-meta">${ss.total > 0 ? ss.total + '問解答済み' : '未挑戦'}</div>
       <div class="subject-stat">
         <div class="stat-bar-bg"><div class="stat-bar-fill" style="width:${pct}%;background:${s.color}"></div></div>
@@ -608,6 +653,8 @@ function toggleSubject(id, el) {
     el.classList.add('active-subject');
   }
 }
+
+// 出題モード・難易度・問題数選択のHTMLエスケープは静的ボタンのため不要
 
 function selectMode(btn) {
   document.querySelectorAll('#mode-selector .mode-btn').forEach(b => b.classList.remove('active'));
@@ -642,7 +689,7 @@ async function generateQuestion(subjects, total) {
 
   const subjectNames = subjects.map(id => SUBJECTS.find(s => s.id === id).name).join('、');
   const diffStr = currentDiff === 'all' ? '基礎〜難問まで混合' : currentDiff === 'easy' ? '基礎レベル' : currentDiff === 'medium' ? '標準レベル' : '難問レベル';
-  const prompt = `あなたは司法試験予備試験の短答式問題作成の専門家です。
+  const prompt = `あなたは司法試験予備試験の短担当式問題作成の専門家です。
 以下の条件で問題を${total}問生成してください。
 
 科目: ${subjectNames}
@@ -673,19 +720,33 @@ async function generateQuestion(subjects, total) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-3-5-sonnet-20241022',
         max_tokens: 3000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
     const data = await res.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
     const raw = data.content?.[0]?.text || '';
-    const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error('JSON parse failed');
+    let jsonText = raw.trim();
+    
+    // MarkdownのJSONコードブロックのトリミング処理
+    if (jsonText.startsWith('```')) {
+      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+    
+    const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('JSON parse failed (No JSON array found)');
+    
     quizQuestions = JSON.parse(jsonMatch[0]);
     showQuestion();
   } catch (e) {
-    qc.innerHTML = `<div class="loading-box"><div style="color:var(--red);font-size:14px;">問題の生成に失敗しました。<br><br><button class="btn-skip" onclick="startQuiz()">再試行</button></div></div>`;
+    console.error('Question generation failed:', e);
+    qc.innerHTML = `<div class="loading-box"><div style="color:var(--red);font-size:14px;">問題の生成に失敗しました。<br><br><span style="font-size:12px;color:var(--text2);">${escapeHTML(e.message)}</span><br><br><button class="btn-skip" onclick="startQuiz()">再試行</button></div></div>`;
   }
 }
 
@@ -698,19 +759,19 @@ function showQuestion() {
 
   qc.innerHTML = `
     <div class="quiz-header">
-      <div><span class="quiz-subject-tag">${q.subject}</span><span class="badge-diff ${diffClass}">${diffLabel}</span></div>
+      <div><span class="quiz-subject-tag">${escapeHTML(q.subject)}</span><span class="badge-diff ${diffClass}">${escapeHTML(diffLabel)}</span></div>
       <div class="quiz-progress">${currentQIndex + 1} / ${quizQuestions.length} 問</div>
     </div>
     <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${(currentQIndex/quizQuestions.length)*100}%"></div></div>
     <div class="question-card">
       <div class="question-num">問 ${currentQIndex + 1}</div>
-      <div class="question-text">${q.question}</div>
+      <div class="question-text">${escapeHTML(q.question)}</div>
     </div>
     <div class="options" id="options-list">
       ${q.options.map((opt, i) => `
         <button class="option-btn" onclick="selectAnswer(${i})" id="opt-${i}">
           <span class="option-label">${String.fromCharCode(65+i)}</span>
-          <span>${opt}</span>
+          <span>${escapeHTML(opt)}</span>
         </button>`).join('')}
     </div>
     <div id="explanation-area"></div>
@@ -748,13 +809,13 @@ function selectAnswer(idx) {
     expArea.innerHTML = `
       <div class="explanation-box">
         <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
-        ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${correctLabel}</strong>：${correctText}</span>` : ''}
-        <div style="margin-top:8px;font-size:12px;color:var(--text3);">${q.year_label}（${q.year}年）本試験 · 問${q.question_no} · ${q.points}点</div>
+        ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${escapeHTML(correctLabel)}</strong>：${escapeHTML(correctText)}</span>` : ''}
+        <div style="margin-top:8px;font-size:12px;color:var(--text3);">${escapeHTML(q.year_label)}（${escapeHTML(q.year)}年）本試験 · 問${escapeHTML(q.question_no)} · ${escapeHTML(q.points)}点</div>
         ${!isCorrect ? `<button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>` : ''}
         <div id="ai-exp-${currentQIndex}"></div>
       </div>`;
   } else {
-    expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${q.explanation}</div>`;
+    expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${escapeHTML(q.explanation)}</div>`;
   }
   document.getElementById('quiz-actions').style.display = 'flex';
 }
@@ -791,19 +852,25 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-3-5-sonnet-20241022',
         max_tokens: 1000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
     const data = await res.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
     const text = data.content?.[0]?.text || '解説を取得できませんでした。';
-    container.innerHTML = `<div class="ai-explanation-content">${text}</div>`;
+    container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(text)}</div>`;
     btn.style.display = 'none';
     // answersに保存（CSV用）
     if (answers[qIdx]) answers[qIdx].aiExplanation = text;
   } catch(e) {
-    container.innerHTML = '<div style="color:var(--red);font-size:13px;margin-top:8px;">解説の取得に失敗しました。</div>';
+    console.error('Failed to fetch AI explanation:', e);
+    container.innerHTML = `<div style="color:var(--red);font-size:13px;margin-top:8px;">解説の取得に失敗しました。<br><span style="font-size:11px;color:var(--text2);">${escapeHTML(e.message)}</span></div>`;
     btn.disabled = false;
     btn.textContent = '🤖 AI解説を見る';
   }
@@ -842,13 +909,13 @@ function showResult() {
     <div class="review-list">
       ${answers.map((a, i) => `
         <div class="review-item ${a.correct ? '' : 'wrong-item'}">
-          <div class="review-q">Q${i+1}. ${a.question.question.substring(0, 80)}${a.question.question.length > 80 ? '…' : ''}</div>
+          <div class="review-q">Q${i+1}. ${escapeHTML(a.question.question.substring(0, 80))}${a.question.question.length > 80 ? '…' : ''}</div>
           <div class="review-meta">
             <span class="tag ${a.correct ? 'tag-correct' : 'tag-wrong'}">${a.correct ? '正解' : '不正解'}</span>
-            <span>${a.question.subject}</span>
-            ${a.question.is_past ? `<span style="margin-left:4px;font-size:11px;color:var(--text3);">${a.question.year_label} 問${a.question.question_no}</span>` : ''}
-            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:4px;">正解: ${a.question.is_past ? a.question.answer_display : String.fromCharCode(65+a.question.answer)}. ${a.question.options[a.question.answer]}</span>` : ''}
-            ${a.aiExplanation ? `<div style="margin-top:6px;padding:8px 10px;background:rgba(91,141,238,0.06);border-left:2px solid var(--blue);border-radius:4px;font-size:12px;color:var(--text);white-space:pre-wrap;">${a.aiExplanation}</div>` : ''}
+            <span>${escapeHTML(a.question.subject)}</span>
+            ${a.question.is_past ? `<span style="margin-left:4px;font-size:11px;color:var(--text3);">${escapeHTML(a.question.year_label)} 問${escapeHTML(a.question.question_no)}</span>` : ''}
+            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:4px;">正解: ${escapeHTML(a.question.is_past ? a.question.answer_display : String.fromCharCode(65+a.question.answer))}. ${escapeHTML(a.question.options[a.question.answer])}</span>` : ''}
+            ${a.aiExplanation ? `<div style="margin-top:6px;padding:8px 10px;background:rgba(91,141,238,0.06);border-left:2px solid var(--blue);border-radius:4px;font-size:12px;color:var(--text);white-space:pre-wrap;">${escapeHTML(a.aiExplanation)}</div>` : ''}
           </div>
         </div>`).join('')}
     </div>
@@ -862,27 +929,29 @@ function showResult() {
 // ─── CSVエクスポート ───
 function downloadCSV() {
   if (!answers.length) return alert('演習データがありません。');
-  const rows = [['問番号','科目','年度','本試験問番号','問題文(先頭100字)','正解','自分の解答','正誤','AI解説']];
+  const headers = ['問番号','科目','年度','本試験問番号','問題文(先頭100字)','正解','自分の解答','正誤','AI解説'];
+  const rows = [];
   answers.forEach((a, i) => {
     const q = a.question;
     const myAns = (q.options[a.chosen] || String(a.chosen));
     const correctAns = q.is_past
       ? `${q.answer_display}: ${q.options[q.answer]}`
       : `${String.fromCharCode(65+q.answer)}: ${q.options[q.answer]}`;
-    const qText = q.question.substring(0, 100).replace(/[\r\n]+/g, ' ');
+    const qText = q.question.substring(0, 100);
     rows.push([
-      i + 1,
-      q.subject,
-      q.year_label || 'AI生成',
-      q.question_no || '',
-      `"${qText.replace(/"/g, '""')}"`,
-      `"${correctAns.replace(/"/g, '""')}"`,
-      `"${myAns.replace(/"/g, '""')}"`,
-      a.correct ? '正解' : '不正解',
-      `"${(a.aiExplanation || '').replace(/"/g, '""').replace(/[\r\n]+/g, ' ')}"`
+      csvCell(i + 1),
+      csvCell(q.subject),
+      csvCell(q.year_label || 'AI生成'),
+      csvCell(q.question_no || ''),
+      csvCell(qText),
+      csvCell(correctAns),
+      csvCell(myAns),
+      csvCell(a.correct ? '正解' : '不正解'),
+      csvCell(a.aiExplanation || '')
     ]);
   });
-  const csv = rows.map(r => r.join(',')).join('\n');
+  const headerRow = headers.map(csvCell).join(',');
+  const csv = [headerRow, ...rows.map(r => r.join(','))].join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -914,7 +983,7 @@ function renderStats() {
     const ss = getSubjectStats(s.id);
     const pct = ss.total > 0 ? Math.round(ss.correct / ss.total * 100) : 0;
     return `<div class="ss-row">
-      <span class="ss-name">${s.name}</span>
+      <span class="ss-name">${escapeHTML(s.name)}</span>
       <div class="ss-bar-bg"><div class="ss-bar-fill" style="width:${pct}%;background:${s.color}"></div></div>
       <span class="ss-pct" style="color:${s.color}">${pct}%</span>
       <span class="ss-count">${ss.total}問</span>
@@ -1022,22 +1091,22 @@ function showPastQuestion() {
   qc.innerHTML = `
     <div class="quiz-header">
       <div>
-        <span class="past-year-badge">${q.year_label}</span>
-        <span class="quiz-subject-tag">${q.subject}</span>
+        <span class="past-year-badge">${escapeHTML(q.year_label)}</span>
+        <span class="quiz-subject-tag">${escapeHTML(q.subject)}</span>
       </div>
       <div class="quiz-progress">${currentQIndex + 1} / ${quizQuestions.length} 問</div>
     </div>
     <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${(currentQIndex/quizQuestions.length)*100}%"></div></div>
     <div class="question-card">
-      <div class="past-q-label">問${q.question_no} (${q.year}年 本試験)</div>
+      <div class="past-q-label">問${escapeHTML(q.question_no)} (${escapeHTML(q.year)}年 本試験)</div>
       <div class="question-num">問 ${currentQIndex + 1}</div>
-      <div class="question-text">${q.question}</div>
+      <div class="question-text">${escapeHTML(q.question)}</div>
     </div>
     <div class="options" id="options-list">
       ${q.options.map((opt, i) => `
         <button class="option-btn" onclick="selectAnswer(${i})" id="opt-${i}">
           <span class="option-label">${i + 1}</span>
-          <span>${opt}</span>
+          <span>${escapeHTML(opt)}</span>
         </button>`).join('')}
     </div>
     <div id="explanation-area"></div>
