@@ -365,7 +365,7 @@
       <p>AIが本試験レベルの問題を自動生成。7科目対応・解説付き。</p>
     </div>
 
-    <div class="section-title">科目を選択</div>
+    <div class="section-title">科目を選択 <span style="font-size:12px;color:var(--text2);font-weight:400;">（タップで選択・複数可）</span></div>
     <div class="subject-grid" id="subject-grid"></div>
 
     <div style="margin-top: 28px;">
@@ -499,7 +499,7 @@ const SUBJECTS = [
   { id: 'gyosei',  name: '行政法',     icon: '🏛️',  color: '#1abc9c' },
 ];
 
-let selectedSubjects = new Set(SUBJECTS.map(s => s.id));
+let selectedSubjects = new Set(); // 最初は全科目オフ。タップした科目だけ出題する
 let currentMode = 'random';
 let currentQuestionCount = 3;
 let lastQuizKind = 'past'; // 結果画面の「もう一度解く」の戻り先
@@ -758,17 +758,24 @@ function renderHome() {
       </div>`;
     grid.appendChild(el);
   });
+  updateStartButton();
 }
 
+function updateStartButton() {
+  const btn = document.getElementById('btn-start');
+  if (!btn) return;
+  btn.disabled = selectedSubjects.size === 0;
+  btn.textContent = selectedSubjects.size === 0 ? '科目を選んでください' : '練習を開始する →';
+}
 function toggleSubject(id, el) {
   if (selectedSubjects.has(id)) {
-    if (selectedSubjects.size === 1) return;
     selectedSubjects.delete(id);
     el.classList.remove('active-subject');
   } else {
     selectedSubjects.add(id);
     el.classList.add('active-subject');
   }
+  updateStartButton();
 }
 
 // 出題モード・難易度・問題数選択のHTMLエスケープは静的ボタンのため不要
