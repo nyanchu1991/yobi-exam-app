@@ -441,6 +441,13 @@
       <button class="mode-btn" data-subj="民事訴訟法" onclick="selectPastSubj(this)">民事訴訟法</button>
     </div>
 
+    <div class="section-title">出題範囲</div>
+    <div class="mode-selector" id="past-scope-selector">
+      <button class="mode-btn active" data-scope="all" onclick="selectPastScope(this)">全問</button>
+      <button class="mode-btn" data-scope="wrong" onclick="selectPastScope(this)">❌ 前回間違えた問題</button>
+      <button class="mode-btn" data-scope="unseen" onclick="selectPastScope(this)">🆕 未解答の問題</button>
+    </div>
+
     <div class="section-title">出題順</div>
     <div class="mode-selector" id="past-order-selector">
       <button class="mode-btn active" data-order="seq" onclick="selectPastOrder(this)">📋 本試験順</button>
@@ -555,9 +562,10 @@ async function callClaude(prompt, maxTokens) {
 
 // ─── STATS ───
 function resetStats() {
-  if (!confirm('成績をリセットしますか？この操作は元に戻せません。')) return;
+  if (!confirm('成績と問題ごとの解答履歴をリセットしますか？この操作は元に戻せません。')) return;
   try {
     localStorage.removeItem('yobiStats');
+    localStorage.removeItem('yobiQHistory');
     stats = {};
     renderStats();
     alert('成績をリセットしました。');
@@ -573,6 +581,51 @@ function saveStats() {
   try { localStorage.setItem('yobiStats', JSON.stringify(stats)); } catch (e) {
     console.error('Failed to save stats:', e);
   }
+}
+
+// ─── 問題ごとの解答履歴（localStorage） ───
+// { [問題ID]: { n: 解答回数, c: 正解回数, last: 直近の正誤, at: 直近の解答日時 } }
+function loadQHistory() {
+  try { return JSON.parse(localStorage.getItem('yobiQHistory') || '{}'); } catch { return {}; }
+}
+function saveQHistory(h) {
+  try { localStorage.setItem('yobiQHistory', JSON.stringify(h)); } catch (e) { console.error('Failed to save history:', e); }
+}
+function recordQHistory(q, isCorrect) {
+  if (!q.is_past || !q.id) return;
+  const h = loadQHistory();
+  const r = h[q.id] || { n: 0, c: 0 };
+  r.n++; if (isCorrect) r.c++;
+  r.last = isCorrect; r.at = new Date().toISOString();
+  h[q.id] = r;
+  saveQHistory(h);
+}
+// 履歴機能の導入前の演習ログから、問題を特定できるものだけ履歴に取り込む（初回のみ）
+function migrateLogToHistory() {
+  try {
+    if (localStorage.getItem('yobiQHistoryMigrated')) return;
+    const log = loadQuizLog();
+    if (log.length && typeof PAST_Q_DB !== 'undefined') {
+      const units = groupPastUnits(PAST_Q_DB);
+      const byHead = {};
+      units.forEach(u => {
+        const key = `${u.year_label}|${u.question.substring(0, 80).replace(/[\r\n]+/g, ' ')}`;
+        (byHead[key] = byHead[key] || []).push(u.id);
+      });
+      const h = loadQHistory();
+      log.forEach(r => {
+        const ids = byHead[`${r.year_label}|${r.question_head}`];
+        if (!ids || ids.length !== 1) return; // 小問が複数ある問題などは特定できないので取り込まない
+        const rec = h[ids[0]] || { n: 0, c: 0 };
+        const ok = r.result === '正解';
+        rec.n++; if (ok) rec.c++;
+        if (!rec.at || r.date > rec.at) { rec.last = ok; rec.at = r.date; }
+        h[ids[0]] = rec;
+      });
+      saveQHistory(h);
+    }
+    localStorage.setItem('yobiQHistoryMigrated', '1');
+  } catch (e) { console.error('History migration failed:', e); }
 }
 
 // ─── 演習ログ（localStorage） ───
@@ -869,6 +922,7 @@ function selectAnswer(idx) {
   answers.push(answerEntry);
   appendQuizLogEntry(answerEntry); // 回答即時保存
 
+  recordQHistory(q, isCorrect);
   const ss = getSubjectStats(SUBJECTS.find(s => s.name === q.subject)?.id || 'kenpo');
   ss.total++;
   if (isCorrect) ss.correct++; else ss.wrong++;
@@ -1039,12 +1093,17 @@ function renderStats() {
   });
   const overall = totalQ > 0 ? Math.round(totalC / totalQ * 100) : 0;
   const logCount = loadQuizLog().length;
+  const hist = Object.values(loadQHistory());
+  const histSeen = hist.length;
+  const histWrong = hist.filter(r => r.last === false).length;
   overview.innerHTML = `
     <div class="stat-card"><div class="val">${totalQ}</div><div class="lbl">総解答数</div></div>
     <div class="stat-card"><div class="val">${overall}%</div><div class="lbl">総合正答率</div></div>
     <div class="stat-card"><div class="val">${totalC}</div><div class="lbl">正解数</div></div>
     <div class="stat-card"><div class="val">${totalQ - totalC}</div><div class="lbl">不正解数</div></div>
-    <div class="stat-card"><div class="val">${logCount.toLocaleString()}</div><div class="lbl">ログ件数</div></div>`;
+    <div class="stat-card"><div class="val">${logCount.toLocaleString()}</div><div class="lbl">ログ件数</div></div>
+    <div class="stat-card"><div class="val">${histSeen.toLocaleString()}</div><div class="lbl">解いた過去問（問題数）</div></div>
+    <div class="stat-card"><div class="val" style="color:var(--red)">${histWrong.toLocaleString()}</div><div class="lbl">前回間違えた過去問</div></div>`;
 
   const list = document.getElementById('subject-stats-list');
   list.innerHTML = SUBJECTS.map(s => {
@@ -1081,6 +1140,20 @@ let pastYear = 'all';
 let pastSubj = 'all';
 let pastOrder = 'seq';
 let pastCount = 10;
+let pastScope = 'all';
+function selectPastScope(btn) {
+  document.querySelectorAll('#past-scope-selector .mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  pastScope = btn.dataset.scope;
+  updatePastInfo();
+}
+function getPastUnits() {
+  const units = groupPastUnits(getPastFiltered());
+  if (pastScope === 'all') return units;
+  const h = loadQHistory();
+  if (pastScope === 'wrong') return units.filter(u => h[u.id] && h[u.id].last === false);
+  return units.filter(u => !h[u.id]);
+}
 
 function selectPastYear(btn) {
   document.querySelectorAll('#past-year-selector .mode-btn').forEach(b => b.classList.remove('active'));
@@ -1150,13 +1223,13 @@ function shuffle(arr) {
   return a;
 }
 function updatePastInfo() {
-  const filtered = groupPastUnits(getPastFiltered());
+  const filtered = getPastUnits();
   const c = pastCount === 0 ? filtered.length : Math.min(pastCount, filtered.length);
   document.getElementById('past-count-display').textContent = c;
 }
 
 function startPastQuiz() {
-  let pool = groupPastUnits(getPastFiltered());
+  let pool = getPastUnits();
   if (!pool.length) return alert('対象の問題がありません');
   if (pastOrder === 'random') pool = shuffle(pool);
   const count = pastCount === 0 ? pool.length : Math.min(pastCount, pool.length);
@@ -1203,6 +1276,7 @@ function showPastQuestion() {
     </div>`;
 }
 
+migrateLogToHistory();
 renderHome();
 </script>
 </body>
