@@ -925,7 +925,8 @@ function selectAnswer(idx) {
   appendQuizLogEntry(answerEntry); // 回答即時保存
 
   recordQHistory(q, isCorrect);
-  const subj = SUBJECTS.find(s => s.name === q.subject) || SUBJECTS.find(s => (q.subject || '').includes(s.name));
+  const partial = SUBJECTS.filter(s => (q.subject || '').includes(s.name));
+  const subj = SUBJECTS.find(s => s.name === q.subject) || (partial.length === 1 ? partial[0] : null);
   if (subj) { // 科目を特定できないときは、別の科目に紛れ込ませないよう集計しない
     const ss = getSubjectStats(subj.id);
     ss.total++;
