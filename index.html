@@ -520,6 +520,38 @@ function csvCell(val) {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
+// ─── API呼び出し（合言葉付き） ───
+const PASSPHRASE_KEY = 'yobiPassphrase';
+function getPassphrase() {
+  try { return localStorage.getItem(PASSPHRASE_KEY) || ''; } catch { return ''; }
+}
+function askPassphrase(message) {
+  const p = prompt(message);
+  if (!p) return '';
+  try { localStorage.setItem(PASSPHRASE_KEY, p); } catch {}
+  return p;
+}
+async function callClaude(prompt, maxTokens) {
+  let passphrase = getPassphrase() || askPassphrase('AI機能の合言葉を入力してください');
+  if (!passphrase) throw new Error('合言葉が未入力です。');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-app-passphrase': passphrase },
+      body: JSON.stringify({ max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    if (res.status === 401 && attempt === 0) {
+      passphrase = askPassphrase('合言葉が違います。もう一度入力してください');
+      if (!passphrase) throw new Error('合言葉が未入力です。');
+      continue;
+    }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
+  throw new Error('合言葉が違います。');
+}
+
 // ─── STATS ───
 function resetStats() {
   if (!confirm('成績をリセットしますか？この操作は元に戻せません。')) return;
@@ -734,21 +766,7 @@ async function generateQuestion(subjects, total) {
 - JSONのみ返す`;
 
   try {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 3000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await res.json();
-    
-    if (data.error) {
-      throw new Error(data.error);
-    }
-    
+    const data = await callClaude(prompt, 3000);
     const raw = data.content?.[0]?.text || '';
     let jsonText = raw.trim();
     
@@ -868,21 +886,7 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 文字数の制限はありません。受験生が十分に理解できるよう詳細に解説してください。`;
 
   try {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await res.json();
-    
-    if (data.error) {
-      throw new Error(data.error);
-    }
-    
+    const data = await callClaude(prompt, 2000);
     const text = data.content?.[0]?.text || '解説を取得できませんでした。';
     container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(text)}</div>`;
     btn.style.display = 'none';
