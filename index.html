@@ -500,7 +500,8 @@ const SUBJECTS = [
 
 let selectedSubjects = new Set(SUBJECTS.map(s => s.id));
 let currentMode = 'random';
-let currentQuestionCount = 5;
+let currentQuestionCount = 3;
+let lastQuizKind = 'past'; // 結果画面の「もう一度解く」の戻り先
 let currentDiff = 'all';
 let quizQuestions = [];
 let currentQIndex = 0;
@@ -789,6 +790,7 @@ function selectCount(btn) {
 
 // ─── QUIZ LOGIC (AI生成) ───
 async function startQuiz() {
+  lastQuizKind = 'ai';
   const subjects = [...selectedSubjects];
   if (!subjects.length) return alert('科目を選択してください');
   showPage('quiz');
@@ -804,7 +806,7 @@ async function generateQuestion(subjects, total) {
 
   const subjectNames = subjects.map(id => SUBJECTS.find(s => s.id === id).name).join('、');
   const diffStr = currentDiff === 'all' ? '基礎〜難問まで混合' : currentDiff === 'easy' ? '基礎レベル' : currentDiff === 'medium' ? '標準レベル' : '難問レベル';
-  const prompt = `あなたは司法試験予備試験の短担当式問題作成の専門家です。
+  const prompt = `あなたは司法試験予備試験の短答式問題作成の専門家です。
 以下の条件で問題を${total}問生成してください。
 
 科目: ${subjectNames}
@@ -923,10 +925,13 @@ function selectAnswer(idx) {
   appendQuizLogEntry(answerEntry); // 回答即時保存
 
   recordQHistory(q, isCorrect);
-  const ss = getSubjectStats(SUBJECTS.find(s => s.name === q.subject)?.id || 'kenpo');
-  ss.total++;
-  if (isCorrect) ss.correct++; else ss.wrong++;
-  saveStats();
+  const subj = SUBJECTS.find(s => s.name === q.subject) || SUBJECTS.find(s => (q.subject || '').includes(s.name));
+  if (subj) { // 科目を特定できないときは、別の科目に紛れ込ませないよう集計しない
+    const ss = getSubjectStats(subj.id);
+    ss.total++;
+    if (isCorrect) ss.correct++; else ss.wrong++;
+    saveStats();
+  }
 
   const expArea = document.getElementById('explanation-area');
   if (q.is_past) {
@@ -972,11 +977,12 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 3. 間違えやすいポイントや受験生が混同しやすい法的知識の整理
 4. 関連する重要判例・条文の補足
 
-文字数の制限はありません。受験生が十分に理解できるよう詳細に解説してください。`;
+全体で2000字程度に収め、受験生が十分に理解できるよう解説してください。`;
 
   try {
-    const data = await callClaude(prompt, 2000);
-    const text = data.content?.[0]?.text || '解説を取得できませんでした。';
+    const data = await callClaude(prompt, 4000);
+    let text = data.content?.[0]?.text || '解説を取得できませんでした。';
+    if (data.stop_reason === 'max_tokens') text += '\n\n（解説が長すぎたため、ここで途中終了しています）';
     container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(text)}</div>`;
     btn.style.display = 'none';
     // answersに保存（CSV用）
@@ -1044,7 +1050,7 @@ function showResult() {
         </div>`).join('')}
     </div>
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
-      <button class="btn-start" onclick="showPage('past');updatePastInfo()">もう一度解く</button>
+      <button class="btn-start" onclick="${lastQuizKind === 'ai' ? 'startQuiz()' : "showPage('past');updatePastInfo()"}">もう一度解く</button>
       <button class="btn-skip" onclick="showPage('home');renderHome()">ホームへ戻る</button>
       <button class="btn-skip" onclick="downloadCSV()" style="border-color:var(--green);color:var(--green);">📥 CSVダウンロード</button>
     </div>`;
@@ -1229,6 +1235,7 @@ function updatePastInfo() {
 }
 
 function startPastQuiz() {
+  lastQuizKind = 'past';
   let pool = getPastUnits();
   if (!pool.length) return alert('対象の問題がありません');
   if (pastOrder === 'random') pool = shuffle(pool);
