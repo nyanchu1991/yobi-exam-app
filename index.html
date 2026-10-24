@@ -179,6 +179,7 @@
   .option-btn:disabled { cursor: default; }
   .option-btn.correct { border-color: var(--green); background: rgba(76,175,124,0.12); }
   .option-btn.wrong { border-color: var(--red); background: rgba(224,85,85,0.1); }
+  .option-btn.picked { border-color: var(--gold); background: var(--gold-dim); }
   .option-btn.revealed-correct { border-color: var(--green); background: rgba(76,175,124,0.08); }
   .option-label {
     min-width: 24px; height: 24px;
@@ -597,6 +598,21 @@ function saveQuizLog(entries) {
     }
   }
 }
+// ─── 正解の表示（「2個選べ」問題は正解が2つ） ───
+function answerList(q) {
+  return Array.isArray(q.answers) ? q.answers : [q.answer];
+}
+function optionLabel(q, i) {
+  return q.is_past ? String(i + 1) : String.fromCharCode(65 + i);
+}
+function answerText(q) {
+  return answerList(q).map(i => `${optionLabel(q, i)}: ${q.options[i]}`).join(' / ');
+}
+function chosenText(q, chosen) {
+  const list = Array.isArray(chosen) ? chosen : [chosen];
+  return list.map(i => q.options[i] !== undefined ? `${optionLabel(q, i)}: ${q.options[i]}` : String(i)).join(' / ');
+}
+
 function appendQuizLogEntry(answerEntry) {
   const log = loadQuizLog();
   const q = answerEntry.question;
@@ -606,10 +622,8 @@ function appendQuizLogEntry(answerEntry) {
     year_label: q.year_label || 'AI生成',
     question_no: q.question_no || '',
     question_head: q.question.substring(0, 80).replace(/[\r\n]+/g, ' '),
-    correct_ans: q.is_past
-      ? `${q.answer_display}: ${q.options[q.answer]}`
-      : `${String.fromCharCode(65 + q.answer)}: ${q.options[q.answer]}`,
-    my_ans: q.options[answerEntry.chosen] || String(answerEntry.chosen),
+    correct_ans: answerText(q),
+    my_ans: chosenText(q, answerEntry.chosen),
     result: answerEntry.correct ? '正解' : '不正解',
     ai_explanation: (answerEntry.aiExplanation || '').replace(/[\r\n]+/g, ' '),
   });
@@ -626,10 +640,8 @@ function appendQuizLog(sessionAnswers) {
       year_label: q.year_label || 'AI生成',
       question_no: q.question_no || '',
       question_head: q.question.substring(0, 80).replace(/[\r\n]+/g, ' '),
-      correct_ans: q.is_past
-        ? `${q.answer_display}: ${q.options[q.answer]}`
-        : `${String.fromCharCode(65 + q.answer)}: ${q.options[q.answer]}`,
-      my_ans: q.options[a.chosen] || String(a.chosen),
+      correct_ans: answerText(q),
+      my_ans: chosenText(q, a.chosen),
       result: a.correct ? '正解' : '不正解',
       ai_explanation: (a.aiExplanation || '').replace(/[\r\n]+/g, ' '),
     });
@@ -819,18 +831,41 @@ function showQuestion() {
 }
 
 // ─── 回答処理 ───
+let pendingPicks = [];
 function selectAnswer(idx) {
   const q = quizQuestions[currentQIndex];
-  const correct = q.answer;
-  const isCorrect = idx === correct;
+  const correctList = answerList(q);
+  const need = correctList.length;
+
+  // 「2個選べ」問題：必要な数だけ選ぶまで判定しない（同じ選択肢を再度押すと取り消し）
+  if (need > 1) {
+    const btn = document.getElementById(`opt-${idx}`);
+    if (pendingPicks.includes(idx)) {
+      pendingPicks = pendingPicks.filter(i => i !== idx);
+      btn.classList.remove('picked');
+    } else {
+      pendingPicks.push(idx);
+      btn.classList.add('picked');
+    }
+    const hint = document.getElementById('pick-hint');
+    if (hint) hint.textContent = `あと${need - pendingPicks.length}個選んでください`;
+    if (pendingPicks.length < need) return;
+  }
+
+  const chosenList = need > 1 ? pendingPicks.slice().sort((a, b) => a - b) : [idx];
+  pendingPicks = [];
+  const hint = document.getElementById('pick-hint');
+  if (hint) hint.remove();
+  const isCorrect = chosenList.length === correctList.length && chosenList.every(i => correctList.includes(i));
 
   document.querySelectorAll('.option-btn').forEach((btn, i) => {
     btn.disabled = true;
-    if (i === idx) btn.classList.add(isCorrect ? 'correct' : 'wrong');
-    if (i === correct && !isCorrect) btn.classList.add('revealed-correct');
+    btn.classList.remove('picked');
+    if (chosenList.includes(i)) btn.classList.add(correctList.includes(i) ? 'correct' : 'wrong');
+    else if (correctList.includes(i)) btn.classList.add('revealed-correct');
   });
 
-  const answerEntry = { question: q, chosen: idx, correct: isCorrect, aiExplanation: '' };
+  const answerEntry = { question: q, chosen: need > 1 ? chosenList : idx, correct: isCorrect, aiExplanation: '' };
   answers.push(answerEntry);
   appendQuizLogEntry(answerEntry); // 回答即時保存
 
@@ -841,13 +876,13 @@ function selectAnswer(idx) {
 
   const expArea = document.getElementById('explanation-area');
   if (q.is_past) {
-    const correctLabel = q.answer_display;
-    const correctText = q.options[correct];
+    const correctLabel = correctList.map(i => i + 1).join('・');
+    const correctText = correctList.map(i => q.options[i]).join(' / ');
     expArea.innerHTML = `
       <div class="explanation-box">
         <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
         ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${escapeHTML(correctLabel)}</strong>：${escapeHTML(correctText)}</span>` : ''}
-        <div style="margin-top:8px;font-size:12px;color:var(--text3);">${escapeHTML(q.year_label)}（${escapeHTML(q.year)}年）本試験 · 問${escapeHTML(q.question_no)} · ${escapeHTML(q.points)}点</div>
+        <div style="margin-top:8px;font-size:12px;color:var(--text3);">${escapeHTML(q.year_label)}（${escapeHTML(q.year)}年）本試験 · ${escapeHTML(q.label || '問' + q.question_no)} · ${escapeHTML(q.points)}点</div>
         ${!isCorrect ? `<button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>` : ''}
         <div id="ai-exp-${currentQIndex}"></div>
       </div>`;
@@ -870,12 +905,12 @@ async function getAIExplanation(qIdx) {
   const prompt = `司法試験予備試験の短答式問題について、不正解だった受験生向けに詳細に解説してください。
 
 【科目】${q.subject}
-【年度】${q.year_label}（${q.year}年）本試験 第${q.question_no}問
+【年度】${q.year_label}（${q.year}年）本試験 ${q.label || '第' + q.question_no + '問'}
 【問題文】
 ${q.question}
 【選択肢】
 ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
-【正解】${q.answer_display}（${q.options[q.answer]}）
+【正解】${answerList(q).map(i => `${i+1}（${q.options[i]}）`).join('、')}
 
 以下の構成で解説してください：
 1. 全体としての正解の理由（根拠となる条文・判例を明示）
@@ -949,7 +984,7 @@ function showResult() {
             <span class="tag ${a.correct ? 'tag-correct' : 'tag-wrong'}">${a.correct ? '正解' : '不正解'}</span>
             <span>${escapeHTML(a.question.subject)}</span>
             ${a.question.is_past ? `<span style="margin-left:4px;font-size:11px;color:var(--text3);">${escapeHTML(a.question.year_label)} 問${escapeHTML(a.question.question_no)}</span>` : ''}
-            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:4px;">正解: ${escapeHTML(a.question.is_past ? a.question.answer_display : String.fromCharCode(65+a.question.answer))}. ${escapeHTML(a.question.options[a.question.answer])}</span>` : ''}
+            ${!a.correct ? `<span style="font-size:11px;color:var(--text2);display:block;margin-top:4px;">正解: ${escapeHTML(answerText(a.question))}</span>` : ''}
             ${a.aiExplanation ? `<div style="margin-top:6px;padding:8px 10px;background:rgba(91,141,238,0.06);border-left:2px solid var(--blue);border-radius:4px;font-size:12px;color:var(--text);white-space:pre-wrap;">${escapeHTML(a.aiExplanation)}</div>` : ''}
           </div>
         </div>`).join('')}
@@ -968,10 +1003,8 @@ function downloadCSV() {
   const rows = [];
   answers.forEach((a, i) => {
     const q = a.question;
-    const myAns = (q.options[a.chosen] || String(a.chosen));
-    const correctAns = q.is_past
-      ? `${q.answer_display}: ${q.options[q.answer]}`
-      : `${String.fromCharCode(65+q.answer)}: ${q.options[q.answer]}`;
+    const myAns = chosenText(q, a.chosen);
+    const correctAns = answerText(q);
     const qText = q.question.substring(0, 100);
     rows.push([
       csvCell(i + 1),
@@ -1083,38 +1116,55 @@ function getPastFiltered() {
   }
   return pool;
 }
+// 「2個選べ」問題は解答1・解答2の2件で登録されているので、出題時は1問にまとめる
+function groupPastUnits(pool) {
+  const units = [];
+  const pairIndex = {};
+  pool.forEach(q => {
+    const base = {
+      id: q.id, subject: q.subject, difficulty: 'medium', question: q.question, options: q.options,
+      answer: q.answer, year_label: q.year_label, year: q.year, question_no: q.question_no,
+      points: q.points, type: q.type, label: q.label, explanation: '', is_past: true
+    };
+    if (q.type === '2複数') {
+      const key = `${q.year_label}|${q.subject}|${(q.label || '').replace(/（解答\d）/, '')}`;
+      if (pairIndex[key] !== undefined) {
+        const u = units[pairIndex[key]];
+        u.answers = [...u.answers, q.answer].sort((a, b) => a - b);
+        return;
+      }
+      base.label = (q.label || '').replace(/（解答\d）/, '');
+      base.answers = [q.answer];
+      pairIndex[key] = units.length;
+    }
+    units.push(base);
+  });
+  return units;
+}
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
 function updatePastInfo() {
-  const filtered = getPastFiltered();
+  const filtered = groupPastUnits(getPastFiltered());
   const c = pastCount === 0 ? filtered.length : Math.min(pastCount, filtered.length);
   document.getElementById('past-count-display').textContent = c;
 }
 
 function startPastQuiz() {
-  let pool = getPastFiltered();
+  let pool = groupPastUnits(getPastFiltered());
   if (!pool.length) return alert('対象の問題がありません');
-  if (pastOrder === 'random') pool = [...pool].sort(() => Math.random() - 0.5);
+  if (pastOrder === 'random') pool = shuffle(pool);
   const count = pastCount === 0 ? pool.length : Math.min(pastCount, pool.length);
-  const selected = pool.slice(0, count);
-
-  quizQuestions = selected.map(q => ({
-    id: q.id,
-    subject: q.subject,
-    difficulty: 'medium',
-    question: q.question,
-    options: q.options,
-    answer: q.answer,
-    answer_display: q.answer_display,
-    year_label: q.year_label,
-    year: q.year,
-    question_no: q.question_no,
-    points: q.points,
-    type: q.type,
-    explanation: '',
-    is_past: true
-  }));
+  quizQuestions = pool.slice(0, count);
 
   currentQIndex = 0;
   answers = [];
+  pendingPicks = [];
   showPage('quiz');
   showPastQuestion();
 }
@@ -1133,7 +1183,7 @@ function showPastQuestion() {
     </div>
     <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${(currentQIndex/quizQuestions.length)*100}%"></div></div>
     <div class="question-card">
-      <div class="past-q-label">問${escapeHTML(q.question_no)} (${escapeHTML(q.year)}年 本試験)</div>
+      <div class="past-q-label">${escapeHTML(q.label || '問' + q.question_no)} (${escapeHTML(q.year)}年 本試験)</div>
       <div class="question-num">問 ${currentQIndex + 1}</div>
       <div class="question-text">${escapeHTML(q.question)}</div>
     </div>
@@ -1144,6 +1194,7 @@ function showPastQuestion() {
           <span>${escapeHTML(opt)}</span>
         </button>`).join('')}
     </div>
+    ${answerList(q).length > 1 ? `<div id="pick-hint" style="font-size:13px;color:var(--gold);margin-top:10px;">${answerList(q).length}個選んでください（順不同）</div>` : ''}
     <div id="explanation-area"></div>
     <div class="quiz-actions" id="quiz-actions" style="display:none">
       <button class="btn-next" onclick="nextQuestion()">
