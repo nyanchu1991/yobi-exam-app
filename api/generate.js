@@ -1,7 +1,12 @@
 import { timingSafeEqual } from 'node:crypto';
 
 // サーバー側で固定する設定（クライアントからは変更できない）
-const MODEL = 'claude-haiku-4-5';
+// 用途ごとにモデルを固定する。画面側は用途（purpose）を指定するだけで、モデル名は選べない
+const MODELS = {
+  generate: 'claude-haiku-4-5',  // 問題の生成
+  explain: 'claude-sonnet-5-5',  // 過去問のAI解説（判例・条文の正確さを優先）
+};
+const DEFAULT_PURPOSE = 'generate';
 const MAX_TOKENS_LIMIT = 4000;
 const MAX_PROMPT_CHARS = 30000;
 
@@ -47,6 +52,8 @@ export default async function handler(req, res) {
   const maxTokens = Number.isFinite(requested) && requested > 0
     ? Math.min(Math.floor(requested), MAX_TOKENS_LIMIT)
     : 2000;
+  const purpose = Object.hasOwn(MODELS, body.purpose) ? body.purpose : DEFAULT_PURPOSE;
+  const model = MODELS[purpose];
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -57,7 +64,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         max_tokens: maxTokens,
         messages: messages.map(m => ({ role: m.role, content: m.content })),
       }),
