@@ -350,9 +350,9 @@
 <div class="topbar">
   <div class="logo">司法予備試験<span>短答式対策</span></div>
   <div class="nav-tabs">
-    <button class="nav-tab active" onclick="showPage('home')">ホーム</button>
-    <button class="nav-tab" onclick="showPage('past')">📚 過去問</button>
-    <button class="nav-tab" onclick="showPage('stats')">成績</button>
+    <button class="nav-tab active" onclick="navTo('home')">ホーム</button>
+    <button class="nav-tab" onclick="navTo('past')">📚 過去問</button>
+    <button class="nav-tab" onclick="navTo('stats')">成績</button>
   </div>
 </div>
 
@@ -453,7 +453,9 @@
     <div class="mode-selector" id="past-order-selector">
       <button class="mode-btn active" data-order="seq" onclick="selectPastOrder(this)">📋 本試験順</button>
       <button class="mode-btn" data-order="random" onclick="selectPastOrder(this)">🎲 ランダム</button>
+      <button class="mode-btn" data-order="weak" onclick="selectPastOrder(this)">📌 苦手優先</button>
     </div>
+    <div id="past-order-note" style="font-size:12px;color:var(--text2);margin:-4px 0 12px;"></div>
 
     <div class="section-title">問題数</div>
     <div class="mode-selector" id="past-count-selector">
@@ -507,6 +509,8 @@ let currentDiff = 'all';
 let quizQuestions = [];
 let currentQIndex = 0;
 let answers = [];
+let quizSession = 0; // 演習を始める・中断するたびに増やす（古い非同期処理の結果を捨てるため）
+let pastProgressKey = null; // 本試験順の「続きから」を記録する条件（記録しない演習では null）
 let stats = loadStats();
 
 // ─── UTILITIES (XSS / CSV Escaping) ───
@@ -541,14 +545,15 @@ function askPassphrase(message) {
   try { localStorage.setItem(PASSPHRASE_KEY, p); } catch {}
   return p;
 }
-async function callClaude(prompt, maxTokens) {
+// purpose: 'generate'（問題生成）/ 'explain'（AI解説）。モデルはサーバー側で用途ごとに固定
+async function callClaude(prompt, maxTokens, purpose = 'generate') {
   let passphrase = getPassphrase() || askPassphrase('AI機能の合言葉を入力してください');
   if (!passphrase) throw new Error('合言葉が未入力です。');
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-app-passphrase': passphrase },
-      body: JSON.stringify({ max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] })
+      body: JSON.stringify({ purpose, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] })
     });
     const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     if (res.status === 401 && attempt === 0) {
@@ -805,10 +810,57 @@ async function startQuiz() {
   quizQuestions = [];
   currentQIndex = 0;
   answers = [];
+  pendingPicks = [];
+  pastProgressKey = null;
   await generateQuestion(subjects, currentQuestionCount);
 }
 
+// 苦手優先モード用：自分の成績（科目別正答率と最近間違えた問題）をプロンプト用の文章にまとめる
+function buildWeakContext(subjects) {
+  const lines = [];
+  const rates = subjects.map(id => {
+    const s = SUBJECTS.find(x => x.id === id);
+    const ss = getSubjectStats(id);
+    return { name: s.name, total: ss.total, rate: ss.total > 0 ? ss.correct / ss.total : null };
+  });
+  const answered = rates.filter(r => r.total > 0).sort((a, b) => a.rate - b.rate);
+  if (answered.length) {
+    lines.push('【科目別の正答率（低い順）】');
+    answered.forEach(r => lines.push(`- ${r.name}: ${Math.round(r.rate * 100)}%（${r.total}問解答）`));
+    const unanswered = rates.filter(r => r.total === 0).map(r => r.name);
+    if (unanswered.length) lines.push(`- 未解答: ${unanswered.join('、')}`);
+  }
+  // 選んだ科目で最近間違えた問題（過去問の履歴＋AI問題の演習ログ）を新しい順に最大8問
+  const names = new Set(rates.map(r => r.name));
+  const wrong = [];
+  if (typeof PAST_Q_DB !== 'undefined') {
+    const h = loadQHistory();
+    const byId = {};
+    PAST_Q_DB.forEach(q => { byId[q.id] = q; });
+    Object.entries(h).forEach(([id, r]) => {
+      const q = byId[id];
+      if (q && r.last === false && names.has(q.subject)) {
+        wrong.push({ at: r.at || '', text: `${q.subject}（${q.year_label} ${(q.label || '問' + q.question_no).replace(/（解答\d）/, '')}）: ${q.question.replace(/\s+/g, ' ').substring(0, 120)}` });
+      }
+    });
+  }
+  loadQuizLog().forEach(r => {
+    if (r.year_label === 'AI生成' && r.result === '不正解' && names.has(r.subject)) {
+      wrong.push({ at: r.date || '', text: `${r.subject}（AI問題）: ${r.question_head}` });
+    }
+  });
+  wrong.sort((a, b) => (a.at < b.at ? 1 : -1));
+  if (wrong.length) {
+    lines.push('【最近間違えた問題（新しい順）】');
+    wrong.slice(0, 8).forEach(w => lines.push(`- ${w.text}`));
+  }
+  if (!lines.length) return '';
+  return `\n受験生の成績データ:\n${lines.join('\n')}\n` +
+    '出題方針: 正答率の低い科目を多めに出題し、上の間違えた問題と同じ論点・関連する論点（ひっかけ・例外・判例知識）を重点的に問うこと。ただし同じ問題をそのまま出さないこと。\n';
+}
+
 async function generateQuestion(subjects, total) {
+  const session = ++quizSession;
   const qc = document.getElementById('quiz-content');
   qc.innerHTML = `<div class="loading-box"><div class="spinner"></div><div class="loading-text">AIが問題を生成中…</div></div>`;
 
@@ -820,7 +872,7 @@ async function generateQuestion(subjects, total) {
 科目: ${subjectNames}
 難易度: ${diffStr}
 出題モード: ${currentMode === 'weak' ? '苦手問題（ひっかけ・例外・判例知識重視）' : currentMode === 'year' ? '本試験形式（正確な条文・判例問題）' : 'ランダム（バランスよく）'}
-
+${currentMode === 'weak' ? buildWeakContext(subjects) : ''}
 【出力フォーマット（JSON配列のみ・マークダウン不要）】
 [
   {
@@ -842,6 +894,7 @@ async function generateQuestion(subjects, total) {
 
   try {
     const data = await callClaude(prompt, 3000);
+    if (session !== quizSession) return; // 生成中に演習を中断・やり直した
     const raw = data.content?.[0]?.text || '';
     let jsonText = raw.trim();
     
@@ -856,6 +909,7 @@ async function generateQuestion(subjects, total) {
     quizQuestions = JSON.parse(jsonMatch[0]);
     showQuestion();
   } catch (e) {
+    if (session !== quizSession) return;
     console.error('Question generation failed:', e);
     qc.innerHTML = `<div class="loading-box"><div style="color:var(--red);font-size:14px;">問題の生成に失敗しました。<br><br><span style="font-size:12px;color:var(--text2);">${escapeHTML(e.message)}</span><br><br><button class="btn-skip" onclick="startQuiz()">再試行</button></div></div>`;
   }
@@ -933,6 +987,7 @@ function selectAnswer(idx) {
   appendQuizLogEntry(answerEntry); // 回答即時保存
 
   recordQHistory(q, isCorrect);
+  recordPastProgress(q); // 途中で中断しても、解いたところまでは「続きから」に反映
   const partial = SUBJECTS.filter(s => (q.subject || '').includes(s.name));
   const subj = SUBJECTS.find(s => s.name === q.subject) || (partial.length === 1 ? partial[0] : null);
   if (subj) { // 科目を特定できないときは、別の科目に紛れ込ませないよう集計しない
@@ -951,7 +1006,7 @@ function selectAnswer(idx) {
         <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
         ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${escapeHTML(correctLabel)}</strong>：${escapeHTML(correctText)}</span>` : ''}
         <div style="margin-top:8px;font-size:12px;color:var(--text3);">${escapeHTML(q.year_label)}（${escapeHTML(q.year)}年）本試験 · ${escapeHTML(q.label || '問' + q.question_no)} · ${escapeHTML(q.points)}点</div>
-        ${!isCorrect ? `<button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>` : ''}
+        <button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>
         <div id="ai-exp-${currentQIndex}"></div>
       </div>`;
   } else {
@@ -970,7 +1025,12 @@ async function getAIExplanation(qIdx) {
   btn.disabled = true;
   btn.textContent = '⏳ 解説を生成中...';
 
-  const prompt = `司法試験予備試験の短答式問題について、不正解だった受験生向けに詳細に解説してください。
+  const a = answers[qIdx];
+  const resultLine = a
+    ? `【受験生の解答】${chosenText(q, a.chosen)}（${a.correct ? '正解。ただし理解が曖昧なまま当たった可能性もあるため、根拠を確認できるように' : '不正解。誤りの原因がわかるように'}解説すること）`
+    : '';
+  const prompt = `司法試験予備試験の短答式問題について、受験生向けに詳細に解説してください。
+条文番号・判例は正確なものだけを挙げ、確信が持てない判例名・日付は書かないでください。
 
 【科目】${q.subject}
 【年度】${q.year_label}（${q.year}年）本試験 ${q.label || '第' + q.question_no + '問'}
@@ -979,6 +1039,7 @@ ${q.question}
 【選択肢】
 ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 【正解】${answerList(q).map(i => `${i+1}（${q.options[i]}）`).join('、')}
+${resultLine}
 
 以下の構成で解説してください：
 1. 全体としての正解の理由（根拠となる条文・判例を明示）
@@ -989,7 +1050,7 @@ ${q.options.map((o, i) => `${i+1}: ${o}`).join('\n')}
 全体で2000字程度に収め、受験生が十分に理解できるよう解説してください。`;
 
   try {
-    const data = await callClaude(prompt, 4000);
+    const data = await callClaude(prompt, 4000, 'explain');
     let text = data.content?.[0]?.text || '解説を取得できませんでした。';
     if (data.stop_reason === 'max_tokens') text += '\n\n（解説が長すぎたため、ここで途中終了しています）';
     container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(text)}</div>`;
@@ -1134,6 +1195,22 @@ function renderStats() {
 }
 
 // ─── NAV ───
+// 演習中（問題の生成待ちを含む）か
+function isQuizInProgress() {
+  return document.getElementById('page-quiz').classList.contains('active');
+}
+// 上部タブから移動するときは、演習中なら確認してから移動する
+function navTo(id) {
+  if (isQuizInProgress()) {
+    const done = answers.length;
+    const msg = done > 0
+      ? `演習を中断して移動しますか？\n（ここまでの${done}問の解答は、履歴と成績に記録済みです）`
+      : '演習を中断して移動しますか？';
+    if (!confirm(msg)) return;
+    quizSession++; // 生成待ちのAI問題が後から画面を書き換えないようにする
+  }
+  showPage(id);
+}
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + id).classList.add('active');
@@ -1186,6 +1263,64 @@ function selectPastOrder(btn) {
   document.querySelectorAll('#past-order-selector .mode-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   pastOrder = btn.dataset.order;
+  updatePastInfo();
+}
+
+// ─── 本試験順の「続きから」 ───
+// { [条件キー]: 最後に解いた問題のID }。条件（年度・科目）ごとに別々に覚える
+const PAST_PROGRESS_KEY = 'yobiPastProgress';
+function loadPastProgress() {
+  try { return JSON.parse(localStorage.getItem(PAST_PROGRESS_KEY) || '{}'); } catch { return {}; }
+}
+function savePastProgress(p) {
+  try { localStorage.setItem(PAST_PROGRESS_KEY, JSON.stringify(p)); } catch (e) { console.error('Failed to save progress:', e); }
+}
+// 「全問」を本試験順に解くときだけ続きを記録する（間違えた問題・未解答は解くたびに対象が変わるため対象外）
+function currentPastProgressKey() {
+  return pastScope === 'all' && pastOrder === 'seq' ? `${pastYear}|${pastSubj}` : null;
+}
+// 続きの開始位置（最後に解いた問題の次）。最後まで解き終わっていたら先頭に戻る
+function pastResumeIndex(pool, key) {
+  if (!key) return 0;
+  const lastId = loadPastProgress()[key];
+  if (!lastId) return 0;
+  const i = pool.findIndex(u => u.id === lastId);
+  return i < 0 || i + 1 >= pool.length ? 0 : i + 1;
+}
+function resetPastProgress() {
+  const key = currentPastProgressKey();
+  if (!key) return;
+  const p = loadPastProgress();
+  delete p[key];
+  savePastProgress(p);
+  updatePastInfo();
+}
+function recordPastProgress(q) {
+  if (!pastProgressKey || !q.is_past) return;
+  const p = loadPastProgress();
+  p[pastProgressKey] = q.id;
+  savePastProgress(p);
+}
+
+// ─── 苦手優先の並べ方 ───
+// 前回間違えた → 正答率の低い問題 → 未解答（正答率の低い科目から） → 毎回正解（古い順）
+function sortPastByWeakness(pool) {
+  const h = loadQHistory();
+  const subjRate = {};
+  SUBJECTS.forEach(s => {
+    const ss = getSubjectStats(s.id);
+    subjRate[s.name] = ss.total > 0 ? ss.correct / ss.total : 1;
+  });
+  const keyed = shuffle(pool).map(u => {
+    const r = h[u.id];
+    if (!r || !r.n) return { u, g: 2, k: subjRate[u.subject] ?? 1 };
+    const rate = r.c / r.n;
+    if (r.last === false) return { u, g: 0, k: rate };
+    if (rate < 1) return { u, g: 1, k: rate };
+    return { u, g: 3, k: Date.parse(r.at || 0) || 0 };
+  });
+  keyed.sort((a, b) => a.g - b.g || a.k - b.k); // 同じ順位どうしはシャッフルした順のまま
+  return keyed.map(x => x.u);
 }
 function selectPastCount(btn) {
   document.querySelectorAll('#past-count-selector .mode-btn').forEach(b => b.classList.remove('active'));
@@ -1239,18 +1374,39 @@ function shuffle(arr) {
 }
 function updatePastInfo() {
   const filtered = getPastUnits();
-  const c = pastCount === 0 ? filtered.length : Math.min(pastCount, filtered.length);
+  const key = currentPastProgressKey();
+  const start = pastResumeIndex(filtered, key);
+  const rest = filtered.length - start;
+  const c = pastCount === 0 ? rest : Math.min(pastCount, rest);
   document.getElementById('past-count-display').textContent = c;
+
+  const note = document.getElementById('past-order-note');
+  if (!note) return;
+  if (pastOrder === 'weak') {
+    note.textContent = '前回間違えた問題 → 正答率の低い問題 → 未解答（正答率の低い科目から） → 正解済み の順に出題します';
+  } else if (key && start > 0) {
+    const u = filtered[start];
+    note.innerHTML = `▶ 続きから：${escapeHTML(u.year_label)} ${escapeHTML(u.subject)} ${escapeHTML(u.label || '問' + u.question_no)}（${start + 1} / ${filtered.length}問目） ` +
+      `<button class="btn-skip" style="padding:3px 10px;font-size:12px;margin-left:6px;" onclick="resetPastProgress()">最初から</button>`;
+  } else if (key) {
+    note.textContent = '最初の問題から出題します（解いたところまで覚えて、次回は続きから出題します）';
+  } else {
+    note.textContent = '';
+  }
 }
 
 function startPastQuiz() {
   lastQuizKind = 'past';
   let pool = getPastUnits();
   if (!pool.length) return alert('対象の問題がありません');
+  pastProgressKey = currentPastProgressKey();
   if (pastOrder === 'random') pool = shuffle(pool);
+  else if (pastOrder === 'weak') pool = sortPastByWeakness(pool);
+  else pool = pool.slice(pastResumeIndex(pool, pastProgressKey));
   const count = pastCount === 0 ? pool.length : Math.min(pastCount, pool.length);
   quizQuestions = pool.slice(0, count);
 
+  quizSession++;
   currentQIndex = 0;
   answers = [];
   pendingPicks = [];
