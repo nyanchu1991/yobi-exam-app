@@ -236,6 +236,15 @@
   }
   .btn-ai-explain:hover:not(:disabled) { background: rgba(91,141,238,0.25); }
   .btn-ai-explain:disabled { opacity: 0.5; cursor: not-allowed; }
+  .exp-buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .exp-buttons .btn-ai-explain { margin-top: 0; }
+  .btn-book-search {
+    display: inline-flex; align-items: center;
+    background: transparent; color: var(--text2);
+    border: 1px solid var(--border2); border-radius: 8px;
+    padding: 10px 16px; font-size: 13px; text-decoration: none;
+  }
+  .btn-book-search:hover { color: var(--text); border-color: var(--text2); }
   .ai-explanation-content {
     background: rgba(91,141,238,0.06);
     border-left: 3px solid var(--blue);
@@ -1071,16 +1080,39 @@ function selectAnswer(idx) {
     const correctText = correctList.map(i => q.options[i]).join(' / ');
     expArea.innerHTML = `
       <div class="explanation-box">
-        <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>
-        ${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${escapeHTML(correctLabel)}</strong>：${escapeHTML(correctText)}</span>` : ''}
+        <strong style="font-size:15px;">${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>${!isCorrect ? `<span style="margin-left:8px;color:var(--text2);font-size:13px;">正解は <strong style="color:var(--gold);">${escapeHTML(correctLabel)}</strong>：${escapeHTML(correctText)}</span>` : ''}
         <div style="margin-top:8px;font-size:12px;color:var(--text3);">${escapeHTML(q.year_label)}（${escapeHTML(q.year)}年）本試験 · ${escapeHTML(q.label || '問' + q.question_no)} · ${escapeHTML(q.points)}点</div>
-        <button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>
+        <div class="exp-buttons">
+          <button class="btn-ai-explain" id="btn-ai-${currentQIndex}" onclick="getAIExplanation(${currentQIndex})">🤖 AI解説を見る</button>
+          ${bookSearchButton(q)}
+        </div>
         <div id="ai-exp-${currentQIndex}"></div>
-      </div>`;
+      </div>`.replace(/>\s+</g, '><').trim(); // 解説欄は改行をそのまま表示するので、HTMLの字下げを詰める
   } else {
-    expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${escapeHTML(q.explanation)}</div>`;
+    expArea.innerHTML = `<div class="explanation-box"><strong>${isCorrect ? '✓ 正解' : '✗ 不正解'}</strong>　${escapeHTML(q.explanation)}<div class="exp-buttons">${bookSearchButton(q)}</div></div>`;
   }
   document.getElementById('quiz-actions').style.display = 'flex';
+}
+
+// ─── Googleブックス検索 ───
+// 問題文の書き出し（「〇〇に関する次の…」など）から論点を取り出して検索語にする
+function bookSearchKeyword(q) {
+  let t = (q.question || '').replace(/\s+/g, '')
+    .replace(/^[(（]配点[：:][^)）]*[)）]/, '')
+    .replace(/^いわゆる/, '');
+  const noParen = t.replace(/[（(][^（()）]*[)）]/g, '');
+  const m = noParen.match(/^(.{2,40}?)(?:に関する|についての|について|に関し)/);
+  if (m) return `${q.subject} ${m[1]}`;
+  const j = t.match(/^(最高裁判所(?:昭和|平成|令和)[^年]{1,3}年\d{1,2}月\d{1,2}日[^判]{0,8}判決)/);
+  if (j) return j[1];
+  const head = noParen.replace(/^(?:次の|以下の)[^，、。]{0,20}?(?:は|では)[，、]/, '');
+  return `${q.subject} ${head.slice(0, 30)}`;
+}
+function bookSearchURL(q) {
+  return 'https://www.google.com/search?tbm=bks&q=' + encodeURIComponent(bookSearchKeyword(q));
+}
+function bookSearchButton(q) {
+  return `<a class="btn-book-search" href="${escapeHTML(bookSearchURL(q))}" target="_blank" rel="noopener noreferrer" title="${escapeHTML(bookSearchKeyword(q))}">📖 Googleブックスで調べる</a>`;
 }
 
 // ─── AI解説取得 ───
