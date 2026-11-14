@@ -904,15 +904,36 @@ async function generateDailyAI(subject) {
 ${examples ? `\n本試験の記述の例（レベルと文体の参考。同じ内容は出さないこと）:\n${examples}\n` : ''}${recent.length ? `\n最近出した論点（避けること）: ${recent.join('、')}\n` : ''}
 【出力（JSONのみ・マークダウン不要）】
 {"topic": "論点（15字以内）", "statement": "記述", "answer": true または false（正しい記述ならtrue）, "explanation": "正誤の理由。根拠条文・判例と、誤りの場合はどこが誤りかを明示（200字程度）"}`;
-  const data = await callClaude(prompt, 1500, 'daily');
-  let raw = (data.content?.[0]?.text || '').trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-  const m = raw.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error('JSON parse failed');
-  const o = JSON.parse(m[0]);
-  if (typeof o.statement !== 'string' || typeof o.answer !== 'boolean') throw new Error('invalid daily question');
+  const data = await callClaude(prompt, 3000, 'daily');
+  const raw = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+  if (!raw.trim()) throw new Error(`AIの返答が空でした（${data.stop_reason || '理由不明'}）`);
+  const o = parseDailyJSON(raw);
+  if (!o) throw new Error(data.stop_reason === 'max_tokens' ? 'AIの返答が途中で切れました' : 'AIの返答を読み取れませんでした');
   recent = [String(o.topic || '').slice(0, 20), ...recent].filter(Boolean).slice(0, 14);
   try { localStorage.setItem(DAILY_TOPICS_KEY, JSON.stringify(recent)); } catch {}
   return { source: 'ai', subject: subject.name, topic: String(o.topic || ''), statement: o.statement, answer: o.answer, explanation: String(o.explanation || '') };
+}
+// AIの返答から {topic, statement, answer, explanation} を取り出す。
+// JSONの崩れ（文字列内の改行、answer が "true"・"×" など）にも耐えるようにする
+function parseDailyJSON(raw) {
+  const text = raw.replace(/```(?:json)?/g, '');
+  const m = text.match(/\{[\s\S]*\}/);
+  let o = null;
+  if (m) {
+    const body = m[0];
+    const tries = [body, body.replace(/[\r\n]+/g, ' '), body.replace(/[“”]/g, '"').replace(/,\s*\}/g, '}').replace(/[\r\n]+/g, ' ')];
+    for (const t of tries) { try { o = JSON.parse(t); break; } catch {} }
+  }
+  if (!o) { // 最後の手段：項目ごとに取り出す
+    const field = k => { const r = text.match(new RegExp(`"${k}"\\s*:\\s*"([\\s\\S]*?)"\\s*(?:,\\s*"|\\})`)); return r ? r[1] : null; };
+    const a = text.match(/"answer"\s*:\s*("?[^,}\n]+"?)/);
+    o = { topic: field('topic'), statement: field('statement'), answer: a ? a[1].replace(/"/g, '').trim() : null, explanation: field('explanation') };
+  }
+  const ans = String(o.answer).trim().toLowerCase();
+  const answer = ['true', '○', '〇', 'o', '正しい', '正', 'yes'].includes(ans) ? true
+               : ['false', '×', 'x', '✕', '誤り', '誤', 'no', '誤っている'].includes(ans) ? false : null;
+  if (typeof o.statement !== 'string' || !o.statement.trim() || answer === null) return null;
+  return { topic: o.topic || '', statement: o.statement.trim(), answer, explanation: o.explanation || '' };
 }
 let dailyLoading = false;
 async function loadDailyQuestion() {
@@ -928,7 +949,7 @@ async function loadDailyQuestion() {
   // AIは合言葉が保存済みのときだけ使う（アプリを開くたびに合言葉を聞かない）
   if (getPassphrase() && navigator.onLine !== false) {
     try { q = await generateDailyAI(subject); }
-    catch (e) { console.warn('Daily AI failed:', e); note = 'AIで作れなかったため、過去問から出題しています'; }
+    catch (e) { console.warn('Daily AI failed:', e); note = `AIで作れなかったため、過去問から出題しています（${e.message}）`; }
   } else {
     note = getPassphrase() ? 'オフラインのため、過去問から出題しています' : 'AI機能の合言葉が未入力のため、過去問から出題しています';
   }
@@ -960,8 +981,15 @@ function renderDaily(d) {
     <div class="daily-statement">${escapeHTML(q.statement)}</div>
     <div class="daily-ox">${btn(true, '○', '正しい')}${btn(false, '×', '誤り')}</div>
     ${result}
-    ${d.note ? `<div class="daily-note">${escapeHTML(d.note)}</div>` : ''}
+    ${d.note ? `<div class="daily-note">${escapeHTML(d.note)}${!r && getPassphrase() ? ` <button class="btn-skip" style="padding:2px 10px;font-size:11px;margin-left:4px;" onclick="retryDailyAI()">AIでもう一度作る</button>` : ''}</div>` : ''}
     ${r ? '<div class="daily-note">次の問題は明日です（毎日、科目が順番に替わります）</div>' : ''}`;
+}
+// 未解答のときだけ、今日の一問をAIで作り直す
+function retryDailyAI() {
+  const d = loadDaily();
+  if (d && d.result) return;
+  try { localStorage.removeItem(DAILY_KEY); } catch {}
+  loadDailyQuestion();
 }
 function answerDaily(val) {
   const d = loadDaily();
