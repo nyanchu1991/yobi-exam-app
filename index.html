@@ -369,6 +369,23 @@
   .daily-ox .option-btn { justify-content: center; align-items: center; font-size: 22px; font-weight: 700; min-height: 56px; padding: 10px; }
   .daily-ox .option-btn small { font-size: 12px; font-weight: 400; color: var(--text2); margin-left: 6px; }
   .daily-note { font-size: 11px; color: var(--text3); margin-top: 10px; }
+  /* 解答後は1行にたためる */
+  .daily-head.toggle { cursor: pointer; margin-bottom: 0; -webkit-user-select: none; user-select: none; }
+  .daily-card.open .daily-head.toggle { margin-bottom: 12px; }
+  .daily-fold { margin-left: auto; font-size: 12px; color: var(--text2); white-space: nowrap; }
+  .daily-result-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 700; }
+  .daily-result-tag.ok { color: var(--green); border: 1px solid var(--green); }
+  .daily-result-tag.ng { color: var(--red); border: 1px solid var(--red); }
+  .daily-peek { font-size: 13px; color: var(--text2); margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* AI解説は数行だけ見せて、残りは「全文を読む」で開く */
+  .clamp-box { position: relative; }
+  .clamp-box.clamped .ai-explanation-content { max-height: 9.5em; overflow: hidden; }
+  .clamp-box.clamped::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3em; pointer-events: none;
+    background: linear-gradient(to bottom, rgba(24,28,46,0), var(--bg3));
+  }
+  .clamp-box.streaming .ai-explanation-content { max-height: 9.5em; overflow-y: auto; }
+  .clamp-toggle { display: block; width: 100%; margin-top: 6px; padding: 8px; background: transparent; border: 1px solid var(--border2); border-radius: 8px; color: var(--text2); font-size: 12px; font-family: inherit; cursor: pointer; }
   .page { display: none; }
   .page.active { display: block; }
 
@@ -993,8 +1010,23 @@ async function loadDailyQuestion() {
   saveDaily(nd);
   renderDaily(nd);
 }
+let dailyOpen = null;    // 解答後のカードを開いているか（null＝自動：アプリを開いたときは、解答済みならたたむ）
+let dailyExpOpen = false; // AI解説を全文表示しているか
+function toggleDaily() {
+  const d = loadDaily();
+  if (!d || !d.result) return;
+  dailyOpen = !isDailyOpen(d);
+  renderDaily(d);
+}
+function isDailyOpen(d) { return !d.result || (dailyOpen === null ? false : dailyOpen); }
+function toggleDailyExp() {
+  dailyExpOpen = !dailyExpOpen;
+  const d = loadDaily();
+  if (d) renderDaily(d);
+}
 function renderDaily(d) {
   const q = d.q;
+  const open = isDailyOpen(d);
   const subj = SUBJECTS.find(s => s.name === q.subject) || dailySubject();
   const card = document.getElementById('daily-card');
   const r = d.result;
@@ -1006,10 +1038,18 @@ function renderDaily(d) {
   let result = '';
   if (r) {
     const book = bookSearchButton({ subject: q.subject, question: q.source === 'ai' ? `${q.topic}に関する` : (PAST_Q_DB.find(x => x.id === q.pastRef) || {}).question || q.statement });
-    result = `<div class="explanation-box" style="margin-top:14px;"><strong>${r.correct ? '✓ 正解' : '✗ 不正解'}</strong>　正解は ${q.answer ? '○（正しい）' : '×（誤り）'}${q.explanation ? `\n${escapeHTML(q.explanation)}` : ''}<div class="exp-buttons">${q.explanation ? '' : `<button class="btn-ai-explain" id="btn-ai-daily" onclick="explainDaily()">🤖 AI解説を見る</button>`}${book}</div><div id="ai-exp-daily">${d.aiExplanation ? `<div class="ai-explanation-content">${escapeHTML(d.aiExplanation)}</div>` : ''}</div></div>`.replace(/>\s+</g, '><');
+    result = `<div class="explanation-box" style="margin-top:14px;"><strong>${r.correct ? '✓ 正解' : '✗ 不正解'}</strong>　正解は ${q.answer ? '○（正しい）' : '×（誤り）'}${q.explanation ? `\n${escapeHTML(q.explanation)}` : ''}<div class="exp-buttons">${q.explanation || d.aiExplanation ? '' : `<button class="btn-ai-explain" id="btn-ai-daily" onclick="explainDaily()">🤖 AI解説を見る</button>`}${book}</div><div id="ai-exp-daily">${d.aiExplanation ? `<div class="clamp-box ${dailyExpOpen ? '' : 'clamped'}"><div class="ai-explanation-content">${escapeHTML(d.aiExplanation)}</div></div><button class="clamp-toggle" onclick="toggleDailyExp()">${dailyExpOpen ? '▲ 解説を閉じる' : '▼ 解説の全文を読む'}</button>` : ''}</div></div>`.replace(/>\s+</g, '><');
+  }
+  card.classList.toggle('open', open);
+  const resultTag = r ? `<span class="daily-result-tag ${r.correct ? 'ok' : 'ng'}">${r.correct ? '✓ 正解' : '✗ 不正解'}</span>` : '';
+  if (r && !open) { // たたんだ状態：見出し1行＋問題文の書き出しだけ
+    card.innerHTML = `
+      <div class="daily-head toggle" onclick="toggleDaily()"><span class="daily-title">🌅 今日の一問</span><span class="daily-tag">${subj.icon} ${escapeHTML(q.subject)}</span>${resultTag}<span class="daily-fold">▼ 開く</span></div>
+      <div class="daily-peek" onclick="toggleDaily()">${escapeHTML(q.source === 'ai' && q.topic ? `${q.topic}：${q.statement}` : q.statement.split('\n').pop())}</div>`;
+    return;
   }
   card.innerHTML = `
-    <div class="daily-head"><span class="daily-title">🌅 今日の一問</span><span class="daily-tag">${subj.icon} ${escapeHTML(q.subject)}</span><span class="daily-tag">${q.source === 'ai' ? 'AI作成・本試験レベル' : '過去問'}</span></div>
+    <div class="daily-head${r ? ' toggle' : ''}"${r ? ' onclick="toggleDaily()"' : ''}><span class="daily-title">🌅 今日の一問</span><span class="daily-tag">${subj.icon} ${escapeHTML(q.subject)}</span>${r ? resultTag : `<span class="daily-tag">${q.source === 'ai' ? 'AI作成・本試験レベル' : '過去問'}</span>`}${r ? '<span class="daily-fold">▲ たたむ</span>' : ''}</div>
     ${q.topic ? `<div class="daily-topic">${escapeHTML(q.topic)}</div>` : ''}
     <div class="daily-statement">${escapeHTML(q.statement)}</div>
     <div class="daily-ox">${btn(true, '○', '正しい')}${btn(false, '×', '誤り')}</div>
@@ -1030,6 +1070,7 @@ function answerDaily(val) {
   const q = d.q;
   const correct = val === q.answer;
   d.result = { chosen: val, correct, at: new Date().toISOString() };
+  dailyOpen = true; // 答えた直後は開いたまま
   saveDaily(d);
   // 成績・演習ログに記録（過去問から出したときは問題ごとの履歴にも）
   const subj = SUBJECTS.find(s => s.name === q.subject);
@@ -1062,9 +1103,13 @@ async function explainDaily() {
 根拠条文・判例、誤りの場合はどこがどう誤りか、関連してよく問われる知識を簡潔にまとめてください。`;
   try {
     const data = await callClaude(prompt, 4000, 'explain', t => {
-      box.innerHTML = `<div class="ai-explanation-content">${escapeHTML(t)}</div>`;
+      box.innerHTML = `<div class="clamp-box streaming"><div class="ai-explanation-content">${escapeHTML(t)}</div></div>`;
+      const c = box.querySelector('.ai-explanation-content');
+      c.scrollTop = c.scrollHeight; // 書かれていく最新の行を見せる
     });
     d.aiExplanation = data.content?.[0]?.text || '';
+    if (data.stop_reason === 'max_tokens' || data.stop_reason === 'interrupted') d.aiExplanation += '\n\n（解説が途中で終わっています）';
+    dailyExpOpen = false; // 生成後は数行だけ表示（全文はボタンで開く）
     saveDaily(d);
     renderDaily(d);
   } catch (e) {
