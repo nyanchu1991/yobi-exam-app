@@ -2,7 +2,7 @@
 // - アプリ本体（画面・過去問データ・アイコン）は端末に保存し、電波がなくても開けるようにする
 // - ネットにつながるときは常に最新版を取りに行き、保存分も更新する（ネット優先）
 // - AI機能（/api/）は保存しない
-const CACHE = 'yobi-app-v1';
+const CACHE = 'yobi-app-v2';
 const FONT_CACHE = 'yobi-fonts-v1';
 const APP_FILES = [
   '/',

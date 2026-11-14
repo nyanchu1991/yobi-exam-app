@@ -354,6 +354,21 @@
     border-radius: var(--radius); padding: 16px 18px; margin-bottom: 24px;
   }
   .transfer-box p { font-size: 13px; color: var(--text2); line-height: 1.7; margin-bottom: 12px; }
+  .daily-card {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-top: 3px solid var(--gold); border-radius: var(--radius);
+    padding: 18px 20px; margin-bottom: 28px;
+  }
+  .daily-card:empty { display: none; }
+  .daily-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .daily-head .daily-title { font-family: 'Noto Serif JP', serif; font-weight: 700; color: var(--gold2); font-size: 16px; }
+  .daily-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border2); color: var(--text2); }
+  .daily-topic { font-size: 12px; color: var(--text2); margin-bottom: 6px; }
+  .daily-statement { font-size: 15px; line-height: 1.85; color: var(--text); white-space: pre-wrap; }
+  .daily-ox { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+  .daily-ox .option-btn { justify-content: center; align-items: center; font-size: 22px; font-weight: 700; min-height: 56px; padding: 10px; }
+  .daily-ox .option-btn small { font-size: 12px; font-weight: 400; color: var(--text2); margin-left: 6px; }
+  .daily-note { font-size: 11px; color: var(--text3); margin-top: 10px; }
   .page { display: none; }
   .page.active { display: block; }
 
@@ -432,6 +447,8 @@
       <h1>司法試験予備試験<br>短答式 対策トレーニング</h1>
       <p>AIが本試験レベルの問題を自動生成。7科目対応・解説付き。</p>
     </div>
+
+    <div class="daily-card" id="daily-card"></div>
 
     <div class="section-title">科目を選択 <span style="font-size:12px;color:var(--text2);font-weight:400;">（タップで選択・複数可）</span></div>
     <div class="subject-grid" id="subject-grid"></div>
@@ -527,6 +544,7 @@
 
     <div class="section-title">問題数</div>
     <div class="mode-selector" id="past-count-selector">
+      <button class="mode-btn" data-count="5" onclick="selectPastCount(this)">5問</button>
       <button class="mode-btn active" data-count="10" onclick="selectPastCount(this)">10問</button>
       <button class="mode-btn" data-count="20" onclick="selectPastCount(this)">20問</button>
       <button class="mode-btn" data-count="0" onclick="selectPastCount(this)">全問</button>
@@ -818,6 +836,178 @@ function downloadQuizLogCSV() {
 function getSubjectStats(subId) {
   if (!stats[subId]) stats[subId] = { total: 0, correct: 0, wrong: 0 };
   return stats[subId];
+}
+
+// ─── 今日の一問（アプリを開いたら1日1問、7科目を日替わりで○×形式） ───
+const DAILY_KEY = 'yobiDailyQ';       // { date, q, result }
+const DAILY_TOPICS_KEY = 'yobiDailyTopics'; // 最近出した論点（同じ論点の繰り返しを避ける）
+function todayStr(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+// 日付ごとに科目を順番に回す（7日で全科目が1周）
+function dailySubject(date = new Date()) {
+  const day = Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000);
+  return SUBJECTS[day % SUBJECTS.length];
+}
+function loadDaily() {
+  try { return JSON.parse(localStorage.getItem(DAILY_KEY) || 'null'); } catch { return null; }
+}
+function saveDaily(d) {
+  try { localStorage.setItem(DAILY_KEY, JSON.stringify(d)); } catch (e) { console.error('Failed to save daily:', e); }
+}
+// 過去問の「正しい／誤っている」形式の記述（本試験そのもの）
+function pastOXStatements(subjectName) {
+  if (typeof PAST_Q_DB === 'undefined') return [];
+  // 「正しい場合（もの）には1を，誤っている場合（もの）には2を」の問題だけ（「限界説なら1」などの形式は除く）
+  return PAST_Q_DB.filter(q => q.options.length === 2 && /^正しい/.test(q.options[0])
+    && /正しい(?:場合には|ものには)[1１]を[，、,]?誤っている(?:場合には|ものには)[2２]を/.test(q.question.replace(/\s+/g, ''))
+    && (!subjectName || q.subject === subjectName));
+}
+// 過去問の問題文を、○×で答える形に整える（配点・「1を／2を選びなさい」・解答欄の指示を除く）
+function pastOXText(q) {
+  return q.question
+    .replace(/^[(（]配点[：:][^)）]*[)）]\s*/, '')
+    .replace(/\n(?!\n|[ア-オ]．)/g, '') // 行の途中の改行をつなぐ
+    .replace(/正しい(?:場合には|ものには)[1１]を[，、,]?誤っている(?:場合には|ものには)[2２]を選びなさい[。｡]?/g, '正誤を答えなさい。')
+    .replace(/のうち([，、])正誤を/g, 'について$1正誤を')
+    .replace(/[（(]解答欄は[^)）]*[)）]/g, '')
+    .trim();
+}
+function pickPastDaily(subjectName, dateStr) {
+  let pool = pastOXStatements(subjectName);
+  if (!pool.length) pool = pastOXStatements(null); // 民法・商法・民訴は○×形式の過去問がないので全科目から
+  if (!pool.length) return null;
+  const h = loadQHistory();
+  const short = pool.filter(q => pastOXText(q).length <= 400); // 長い事例問題は「今日の一問」に向かないので後回し
+  if (short.length) pool = short;
+  const unseen = pool.filter(q => !h[q.id]);
+  const list = unseen.length ? unseen : pool;
+  let n = 0; for (const c of dateStr) n = (n * 31 + c.charCodeAt(0)) >>> 0; // 日付から決まる番号（同じ日は同じ問題）
+  const q = list[n % list.length];
+  return { source: 'past', id: q.id, subject: q.subject, topic: `${q.year_label}（${q.year}年）本試験 ${q.label || ''}`,
+           statement: pastOXText(q), answer: q.answer === 0, explanation: '', pastRef: q.id };
+}
+async function generateDailyAI(subject) {
+  const examples = shuffle(pastOXStatements(subject.name)).slice(0, 2)
+    .map(q => `- ${pastOXText(q).split('\n').pop()}（正解：${q.answer === 0 ? '○' : '×'}）`).join('\n');
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem(DAILY_TOPICS_KEY) || '[]'); } catch {}
+  const prompt = `あなたは司法試験予備試験の短答式問題の作成者です。
+「${subject.name}」について、本試験と同じレベル・文体の正誤問題（○×で答える記述）を1問作ってください。
+
+条件:
+- 本試験の「次の記述は正しいか」という形式の記述1つ。判例の趣旨または条文に照らして正誤がはっきり決まるもの
+- 条文の要件・例外、判例の結論、よく似た制度との違いなど、本試験で実際に問われる論点から選ぶ
+- 誤りの記述にする場合は、本試験と同様に一部だけを入れ替えるひっかけにする（明らかに誤りとわかる記述にはしない）
+- 条文番号・判例は正確なものだけを使い、確信が持てない判例名・日付は書かない
+- 正しい記述と誤った記述は半々程度の確率で出す
+${examples ? `\n本試験の記述の例（レベルと文体の参考。同じ内容は出さないこと）:\n${examples}\n` : ''}${recent.length ? `\n最近出した論点（避けること）: ${recent.join('、')}\n` : ''}
+【出力（JSONのみ・マークダウン不要）】
+{"topic": "論点（15字以内）", "statement": "記述", "answer": true または false（正しい記述ならtrue）, "explanation": "正誤の理由。根拠条文・判例と、誤りの場合はどこが誤りかを明示（200字程度）"}`;
+  const data = await callClaude(prompt, 1500, 'daily');
+  let raw = (data.content?.[0]?.text || '').trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('JSON parse failed');
+  const o = JSON.parse(m[0]);
+  if (typeof o.statement !== 'string' || typeof o.answer !== 'boolean') throw new Error('invalid daily question');
+  recent = [String(o.topic || '').slice(0, 20), ...recent].filter(Boolean).slice(0, 14);
+  try { localStorage.setItem(DAILY_TOPICS_KEY, JSON.stringify(recent)); } catch {}
+  return { source: 'ai', subject: subject.name, topic: String(o.topic || ''), statement: o.statement, answer: o.answer, explanation: String(o.explanation || '') };
+}
+let dailyLoading = false;
+async function loadDailyQuestion() {
+  const date = todayStr();
+  const d = loadDaily();
+  if (d && d.date === date && d.q) { renderDaily(d); return; }
+  if (dailyLoading) return;
+  dailyLoading = true;
+  const subject = dailySubject();
+  const card = document.getElementById('daily-card');
+  card.innerHTML = `<div class="daily-head"><span class="daily-title">🌅 今日の一問</span><span class="daily-tag">${subject.icon} ${escapeHTML(subject.name)}</span></div><div class="loading-text" style="font-size:13px;color:var(--text2);">問題を作成中…</div>`;
+  let q = null, note = '';
+  // AIは合言葉が保存済みのときだけ使う（アプリを開くたびに合言葉を聞かない）
+  if (getPassphrase() && navigator.onLine !== false) {
+    try { q = await generateDailyAI(subject); }
+    catch (e) { console.warn('Daily AI failed:', e); note = 'AIで作れなかったため、過去問から出題しています'; }
+  } else {
+    note = getPassphrase() ? 'オフラインのため、過去問から出題しています' : 'AI機能の合言葉が未入力のため、過去問から出題しています';
+  }
+  if (!q) q = pickPastDaily(subject.name, date);
+  dailyLoading = false;
+  if (!q) { card.innerHTML = ''; return; }
+  const nd = { date, q, note, result: null };
+  saveDaily(nd);
+  renderDaily(nd);
+}
+function renderDaily(d) {
+  const q = d.q;
+  const subj = SUBJECTS.find(s => s.name === q.subject) || dailySubject();
+  const card = document.getElementById('daily-card');
+  const r = d.result;
+  const btn = (val, mark, lbl) => {
+    let cls = '';
+    if (r) cls = val === q.answer ? (r.chosen === val ? 'correct' : 'revealed-correct') : (r.chosen === val ? 'wrong' : '');
+    return `<button class="option-btn ${cls}" ${r ? 'disabled' : ''} onclick="answerDaily(${val})">${mark}<small>${lbl}</small></button>`;
+  };
+  let result = '';
+  if (r) {
+    const book = bookSearchButton({ subject: q.subject, question: q.source === 'ai' ? `${q.topic}に関する` : (PAST_Q_DB.find(x => x.id === q.pastRef) || {}).question || q.statement });
+    result = `<div class="explanation-box" style="margin-top:14px;"><strong>${r.correct ? '✓ 正解' : '✗ 不正解'}</strong>　正解は ${q.answer ? '○（正しい）' : '×（誤り）'}${q.explanation ? `\n${escapeHTML(q.explanation)}` : ''}<div class="exp-buttons">${q.explanation ? '' : `<button class="btn-ai-explain" id="btn-ai-daily" onclick="explainDaily()">🤖 AI解説を見る</button>`}${book}</div><div id="ai-exp-daily">${d.aiExplanation ? `<div class="ai-explanation-content">${escapeHTML(d.aiExplanation)}</div>` : ''}</div></div>`.replace(/>\s+</g, '><');
+  }
+  card.innerHTML = `
+    <div class="daily-head"><span class="daily-title">🌅 今日の一問</span><span class="daily-tag">${subj.icon} ${escapeHTML(q.subject)}</span><span class="daily-tag">${q.source === 'ai' ? 'AI作成・本試験レベル' : '過去問'}</span></div>
+    ${q.topic ? `<div class="daily-topic">${escapeHTML(q.topic)}</div>` : ''}
+    <div class="daily-statement">${escapeHTML(q.statement)}</div>
+    <div class="daily-ox">${btn(true, '○', '正しい')}${btn(false, '×', '誤り')}</div>
+    ${result}
+    ${d.note ? `<div class="daily-note">${escapeHTML(d.note)}</div>` : ''}
+    ${r ? '<div class="daily-note">次の問題は明日です（毎日、科目が順番に替わります）</div>' : ''}`;
+}
+function answerDaily(val) {
+  const d = loadDaily();
+  if (!d || d.result) return;
+  const q = d.q;
+  const correct = val === q.answer;
+  d.result = { chosen: val, correct, at: new Date().toISOString() };
+  saveDaily(d);
+  // 成績・演習ログに記録（過去問から出したときは問題ごとの履歴にも）
+  const subj = SUBJECTS.find(s => s.name === q.subject);
+  if (subj) {
+    const ss = getSubjectStats(subj.id);
+    ss.total++; if (correct) ss.correct++; else ss.wrong++;
+    saveStats();
+  }
+  const past = q.source === 'past' ? PAST_Q_DB.find(x => x.id === q.pastRef) : null;
+  if (past) recordQHistory({ ...past, is_past: true }, correct);
+  const lq = past ? { ...past, is_past: true } : { subject: q.subject, year_label: 'AI生成', question: `【今日の一問】${q.statement}`, options: ['正しい', '誤り'], answer: q.answer ? 0 : 1 };
+  appendQuizLogEntry({ question: lq, chosen: val ? 0 : 1, correct, aiExplanation: q.explanation || '' });
+  renderDaily(d);
+  renderHome();
+}
+async function explainDaily() {
+  const d = loadDaily();
+  if (!d) return;
+  const btn = document.getElementById('btn-ai-daily');
+  const box = document.getElementById('ai-exp-daily');
+  if (btn) btn.disabled = true;
+  box.innerHTML = '<div class="loading-text" style="font-size:13px;color:var(--text2);margin-top:10px;">AIが解説を作成中…</div>';
+  const prompt = `司法試験予備試験の短答式（${d.q.subject}）の次の記述について、正誤の理由を受験生向けに解説してください。
+条文番号・判例は正確なものだけを挙げ、確信が持てない判例名・日付は書かないでください。
+
+【記述】${d.q.statement}
+【正解】${d.q.answer ? '正しい' : '誤り'}
+【受験生の解答】${d.result.chosen ? '正しい' : '誤り'}（${d.result.correct ? '正解' : '不正解'}）
+
+根拠条文・判例、誤りの場合はどこがどう誤りか、関連してよく問われる知識を簡潔にまとめてください。`;
+  try {
+    const data = await callClaude(prompt, 2000, 'explain');
+    d.aiExplanation = data.content?.[0]?.text || '';
+    saveDaily(d);
+    renderDaily(d);
+  } catch (e) {
+    box.innerHTML = `<div style="color:var(--red);font-size:13px;margin-top:10px;">解説の取得に失敗しました：${escapeHTML(e.message)}</div>`;
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ─── RENDER HOME ───
@@ -1550,7 +1740,7 @@ function showPastQuestion() {
 
 // ─── データの引っ越し（書き出し・読み込み） ───
 // 合言葉は書き出さない（読み込んだ先で入力し直す）
-const TRANSFER_KEYS = ['yobiStats', 'yobiQHistory', 'yobiQuizLog', 'yobiQHistoryMigrated', 'yobiPastProgress'];
+const TRANSFER_KEYS = ['yobiStats', 'yobiQHistory', 'yobiQuizLog', 'yobiQHistoryMigrated', 'yobiPastProgress', 'yobiDailyQ', 'yobiDailyTopics'];
 async function exportAppData() {
   const data = {};
   TRANSFER_KEYS.forEach(k => {
@@ -1617,6 +1807,14 @@ if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.
 
 migrateLogToHistory();
 renderHome();
+loadDailyQuestion();
+// 日付が変わってからアプリに戻ってきたときも、新しい一問に替える
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    const d = loadDaily();
+    if (!d || d.date !== todayStr()) loadDailyQuestion();
+  }
+});
 </script>
 </body>
 </html>
