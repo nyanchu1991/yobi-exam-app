@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
 const MODELS = {
   generate: 'claude-haiku-4-5',  // 問題の生成
   explain: 'claude-sonnet-5-5',  // 過去問のAI解説（判例・条文の正確さを優先）
+  daily: 'claude-sonnet-5-5',    // 今日の一問（1日1回。本試験レベルの正確さを優先）
 };
 const DEFAULT_PURPOSE = 'generate';
 const MAX_TOKENS_LIMIT = 4000;
