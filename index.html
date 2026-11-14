@@ -641,7 +641,8 @@ function askPassphrase(message) {
   return p;
 }
 // purpose: 'generate'（問題生成）/ 'explain'（AI解説）。モデルはサーバー側で用途ごとに固定
-async function callClaude(prompt, maxTokens, purpose = 'generate') {
+// onText(全文) を渡すと、返答ができた分から呼ばれる（解説を書かれていく順に表示する用）
+async function callClaude(prompt, maxTokens, purpose = 'generate', onText = null) {
   let passphrase = getPassphrase() || askPassphrase('AI機能の合言葉を入力してください');
   if (!passphrase) throw new Error('合言葉が未入力です。');
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -650,6 +651,9 @@ async function callClaude(prompt, maxTokens, purpose = 'generate') {
       headers: { 'Content-Type': 'application/json', 'x-app-passphrase': passphrase },
       body: JSON.stringify({ purpose, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] })
     });
+    if (res.ok && (res.headers.get('content-type') || '').includes('ndjson')) {
+      return await readClaudeStream(res, onText);
+    }
     const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     if (res.status === 401 && attempt === 0) {
       passphrase = askPassphrase('合言葉が違います。もう一度入力してください');
@@ -660,6 +664,35 @@ async function callClaude(prompt, maxTokens, purpose = 'generate') {
     return data;
   }
   throw new Error('合言葉が違います。');
+}
+
+// サーバーからのNDJSONを読み、従来と同じ形 { content:[{type:'text',text}], stop_reason } にして返す
+async function readClaudeStream(res, onText) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '', text = '', stop = null, model = '', done = false;
+  const handle = line => {
+    if (!line.trim()) return;
+    let o; try { o = JSON.parse(line); } catch { return; }
+    if (o.error) throw new Error(o.error);
+    if (o.t) { text += o.t; if (onText) { try { onText(text); } catch {} } }
+    if (o.done) { done = true; stop = o.stop_reason; model = o.model; }
+  };
+  try {
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      buf += decoder.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
+    handle(buf);
+  } catch (e) {
+    if (!text) throw new Error(e.message === 'Load failed' || e.name === 'TypeError' ? '通信が途中で切れました。もう一度お試しください。' : e.message);
+    stop = stop || 'interrupted'; // 途中まで届いた分は使う
+  }
+  if (!done && !text) throw new Error('通信が途中で切れました。もう一度お試しください。');
+  return { content: [{ type: 'text', text }], stop_reason: done ? stop : 'interrupted', model };
 }
 
 // ─── STATS ───
@@ -1028,7 +1061,9 @@ async function explainDaily() {
 
 根拠条文・判例、誤りの場合はどこがどう誤りか、関連してよく問われる知識を簡潔にまとめてください。`;
   try {
-    const data = await callClaude(prompt, 2000, 'explain');
+    const data = await callClaude(prompt, 4000, 'explain', t => {
+      box.innerHTML = `<div class="ai-explanation-content">${escapeHTML(t)}</div>`;
+    });
     d.aiExplanation = data.content?.[0]?.text || '';
     saveDaily(d);
     renderDaily(d);
@@ -1368,7 +1403,9 @@ ${resultLine}
 全体で2000字程度に収め、受験生が十分に理解できるよう解説してください。`;
 
   try {
-    const data = await callClaude(prompt, 4000, 'explain');
+    const data = await callClaude(prompt, 4000, 'explain', t => {
+      container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(t)}</div>`;
+    });
     let text = data.content?.[0]?.text || '解説を取得できませんでした。';
     if (data.stop_reason === 'max_tokens') text += '\n\n（解説が長すぎたため、ここで途中終了しています）';
     container.innerHTML = `<div class="ai-explanation-content">${escapeHTML(text)}</div>`;
