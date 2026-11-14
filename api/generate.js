@@ -30,6 +30,7 @@ export default async function handler(req, res) {
   }
 
   if (!passphraseMatches(req.headers['x-app-passphrase'])) {
+    console.warn('[api] 401 passphrase mismatch');
     return res.status(401).json({ error: '合言葉が違います。' });
   }
 
@@ -56,6 +57,8 @@ export default async function handler(req, res) {
   const purpose = Object.hasOwn(MODELS, body.purpose) ? body.purpose : DEFAULT_PURPOSE;
   const model = MODELS[purpose];
 
+  const started = Date.now();
+  console.log(`[api] start purpose=${purpose} model=${model} max_tokens=${maxTokens} chars=${totalChars}`);
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -74,13 +77,15 @@ export default async function handler(req, res) {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error('Anthropic API Error:', response.status, data.error?.type);
+      console.error(`[api] anthropic error purpose=${purpose} model=${model} status=${response.status} type=${data.error?.type} message=${data.error?.message} ms=${Date.now() - started}`);
       return res.status(response.status).json({ error: data.error?.message || 'Anthropic API returned an error' });
     }
 
+    const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+    console.log(`[api] ok purpose=${purpose} model=${data.model} stop=${data.stop_reason} out_tokens=${data.usage?.output_tokens} text_chars=${text.length} ms=${Date.now() - started} head=${JSON.stringify(text.slice(0, 120))}`);
     return res.status(200).json(data);
   } catch (err) {
-    console.error('API Proxy Exception:', err);
+    console.error(`[api] exception purpose=${purpose} model=${model} ms=${Date.now() - started}`, err);
     return res.status(500).json({ error: 'An internal server error occurred while processing the request.' });
   }
 }
